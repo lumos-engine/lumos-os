@@ -1,5 +1,7 @@
 #include "lumos/api/rest_api.hpp"
 #include "lumos/core/types.hpp"
+#include "lumos/matter/matter_service.hpp"
+#include "lumos/wifi/neighbor_info.hpp"
 
 #include <cJSON.h>
 #include "esp_system.h"
@@ -184,6 +186,8 @@ esp_err_t RestApi::get_root(httpd_req_t* req) {
     cJSON_AddStringToObject(links, "plugins", "/api/v1/plugins");
     cJSON_AddStringToObject(links, "settings", "/api/v1/settings");
     cJSON_AddStringToObject(links, "status", "/api/v1/status");
+    cJSON_AddStringToObject(links, "neighbors", "/api/v1/neighbors");
+    cJSON_AddStringToObject(links, "matter", "/api/v1/matter");
     cJSON_AddStringToObject(links, "ws", "/ws");
     char* printed = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -415,8 +419,12 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "hyperhdr_timeout_ms"); cJSON_IsNumber(v)) {
         d.hyperhdr_timeout_ms = static_cast<Milliseconds>(v->valueint);
     }
+    bool hostname_changed = false;
     if (const cJSON* v = cJSON_GetObjectItem(json, "hostname"); cJSON_IsString(v)) {
-        d.hostname = v->valuestring;
+        if (d.hostname != v->valuestring) {
+            d.hostname = v->valuestring;
+            hostname_changed = true;
+        }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_use_static"); cJSON_IsBool(v)) {
         d.wifi_use_static = cJSON_IsTrue(v);
@@ -437,6 +445,10 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         d.wifi_dns2 = v->valuestring;
     }
     self->preferences_.save();
+    if (hostname_changed) {
+        self->wifi_.apply_hostname();
+        self->wifi_.start_mdns();
+    }
     cJSON_Delete(json);
     if (reboot_required) {
         // Framebuffer/driver size is fixed at boot.
@@ -446,6 +458,37 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         esp_restart();
     }
     return send_json(req, "{\"ok\":true}");
+}
+
+esp_err_t RestApi::get_neighbors(httpd_req_t* req) {
+    auto* self = from_req(req);
+    const auto json = neighbors_to_json(self->wifi_.neighbors());
+    return send_json(req, json.c_str());
+}
+
+esp_err_t RestApi::get_matter(httpd_req_t* req) {
+    const auto info = MatterService::instance().pairing_info();
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "enabled", info.enabled);
+    cJSON_AddBoolToObject(root, "commissioned", info.commissioned);
+    cJSON_AddStringToObject(root, "manual_code", info.manual_code.c_str());
+    cJSON_AddStringToObject(root, "qr_payload", info.qr_payload.c_str());
+    cJSON_AddNumberToObject(root, "discriminator", info.discriminator);
+    cJSON_AddNumberToObject(root, "passcode", info.passcode);
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
+}
+
+esp_err_t RestApi::post_matter_factory_reset(httpd_req_t* req) {
+    MatterService::instance().factory_reset();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+    vTaskDelay(pdMS_TO_TICKS(250));
+    esp_restart();
+    return ESP_OK;
 }
 
 esp_err_t RestApi::get_status(httpd_req_t* req) {
@@ -650,6 +693,12 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/leds", .method = HTTP_GET, .handler = get_leds, .user_ctx = this},
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
+        {.uri = "/api/v1/neighbors", .method = HTTP_GET, .handler = get_neighbors, .user_ctx = this},
+        {.uri = "/api/v1/matter", .method = HTTP_GET, .handler = get_matter, .user_ctx = this},
+        {.uri = "/api/v1/matter/factory-reset",
+         .method = HTTP_POST,
+         .handler = post_matter_factory_reset,
+         .user_ctx = this},
         {.uri = "/json", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
         {.uri = "/json/state", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
         {.uri = "/json/state", .method = HTTP_PUT, .handler = put_wled_state, .user_ctx = this},

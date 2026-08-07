@@ -20,6 +20,8 @@ target_include_directories(lumos_host_logic PUBLIC
     ../components/lumos_core/include
     ../components/lumos_renderer/include
     ../components/lumos_plugins_builtin/include
+    ../components/lumos_matter/include
+    ../components/lumos_wifi/include
 )
 
 add_executable(test_ddp_parser test_ddp_parser.cpp)
@@ -41,3 +43,7 @@ add_test(NAME test_color_processor COMMAND test_color_processor)
 add_executable(test_plugin_lifecycle test_plugin_lifecycle.cpp)
 target_link_libraries(test_plugin_lifecycle PRIVATE lumos_host_logic)
 add_test(NAME test_plugin_lifecycle COMMAND test_plugin_lifecycle)
+
+add_executable(test_matter_map test_matter_map.cpp)
+target_link_libraries(test_matter_map PRIVATE lumos_host_logic)
+add_test(NAME test_matter_map COMMAND test_matter_map)

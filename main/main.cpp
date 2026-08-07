@@ -4,6 +4,7 @@
 #include "lumos/core/logger.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/led/ws2815_rmt_driver.hpp"
+#include "lumos/matter/matter_service.hpp"
 #include "lumos/ota/ota_service.hpp"
 #include "lumos/plugin/plugin_manager.hpp"
 #include "lumos/plugins/register_builtins.hpp"
@@ -26,7 +27,7 @@ lumos::Logger log{"main"};
 httpd_handle_t start_http_server() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 32;
+    config.max_uri_handlers = 40;
     config.stack_size = 8192;
     config.lru_purge_enable = true;
 
@@ -129,6 +130,11 @@ extern "C" void app_main() {
     static auto s_rest = std::move(rest);
     static auto s_ws = std::move(ws);
     static auto s_ota = std::move(ota);
+
+    // Matter after WiFi stack exists; commissioning uses BLE / already-on-network.
+    if (!lumos::MatterService::instance().start(*s_preferences, *s_plugins, *s_renderer)) {
+        log.warn("Matter start failed — lighting APIs still available");
+    }
 
     xTaskCreate(render_loop, "render", 8192, s_plugins.get(), 6, nullptr);
     log.info("LumosOS ready");

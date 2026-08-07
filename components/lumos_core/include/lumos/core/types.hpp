@@ -37,7 +37,7 @@ inline constexpr std::uint16_t kDefaultPowerLimitMa = 5000;
 inline constexpr Milliseconds kDefaultHyperHdrTimeoutMs = 6500;
 
 inline constexpr std::string_view kAppName = "LumosOS";
-inline constexpr std::string_view kAppVersion = "0.2.0";
-inline constexpr std::string_view kApiVersion = "0.2";
+inline constexpr std::string_view kAppVersion = "0.3.0";
+inline constexpr std::string_view kApiVersion = "0.3";
 
 } // namespace lumos

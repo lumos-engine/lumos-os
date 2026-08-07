@@ -2,6 +2,7 @@
 
 #include "lumos/core/result.hpp"
 #include "lumos/preferences/preferences.hpp"
+#include "lumos/wifi/neighbor_info.hpp"
 
 #include <atomic>
 #include <functional>
@@ -56,13 +57,21 @@ public:
     void on_got_ip();
     void on_sta_start();
 
-    // mDNS: lumosos.local + HyperHDR/Hyperk-compatible discovery hints
+    // mDNS: LumosOS.local + HyperHDR/Hyperk-compatible discovery hints
     Result<void> start_mdns();
+
+    // Apply preferences hostname to STA DHCP/netif (routers show this, not "espressif").
+    void apply_hostname();
+
+    // Browse _lumosos._tcp peers (excludes self). Results cached ~30s.
+    std::vector<NeighborInfo> neighbors();
 
 private:
     void ensure_netif();
     Result<void> start_sta_from_prefs();
     Result<void> apply_sta_ip_config();
+    void refresh_neighbors_if_stale();
+    static std::string mdns_hostname_label(const std::string& hostname);
 
     Preferences& preferences_;
     WifiStatus status_{};
@@ -73,6 +82,10 @@ private:
     std::atomic<bool> captive_dns_running_{false};
     std::atomic<bool> want_sta_connect_{false};
     char mdns_leds_txt_[8]{"150"};
+    char mdns_api_txt_[8]{"0.3"};
+    char mdns_chipset_txt_[16]{"ws2815"};
+    std::vector<NeighborInfo> neighbors_cache_;
+    std::int64_t neighbors_cache_ms_{0};
 };
 
 } // namespace lumos

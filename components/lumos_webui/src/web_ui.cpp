@@ -35,7 +35,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </style>
 </head>
 <body>
-<header><h1>LumosOS</h1><p>Recovery &amp; local configuration · API 0.2</p></header>
+<header><h1>LumosOS</h1><p>Recovery &amp; local configuration · API 0.3</p></header>
 <main>
 <section>
 <h2>Live preview</h2>
@@ -107,6 +107,19 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <div id="pluginParams"></div>
 <label>Brightness (0–255)</label><input id="brightness" type="number" min="0" max="255"/>
 <button onclick="applyLighting()">Apply</button>
+</section>
+<section>
+<h2>Nearby LumosOS</h2>
+<pre id="neighbors">Loading…</pre>
+<button class="secondary" type="button" onclick="loadNeighbors()">Refresh</button>
+<p class="hint">Read-only mDNS discovery on <code>_lumosos._tcp</code>. Open a peer by IP.</p>
+</section>
+<section>
+<h2>Matter</h2>
+<pre id="matterInfo">Loading…</pre>
+<button class="secondary" type="button" onclick="loadMatter()">Refresh pairing</button>
+<button type="button" onclick="resetMatter()">Factory reset Matter</button>
+<p class="hint">Use the manual code or QR payload in Apple Home / Google Home / Alexa. Wi‑Fi must already be configured on this device.</p>
 </section>
 <section>
 <h2>OTA Update</h2>
@@ -278,7 +291,7 @@ async function saveWifi(){
       ip:ip.value.trim(),gateway:gateway.value.trim(),netmask:netmask.value.trim()||'255.255.255.0',
       dns1:dns1.value.trim(),dns2:dns2.value.trim()
     })});
-    alert('Connecting… then open '+(useStatic.checked?('http://'+ip.value.trim()):'http://lumosos.local'));
+    alert('Connecting… then open '+(useStatic.checked?('http://'+ip.value.trim()):'http://lumosos.local (or your hostname)'));
   }catch(e){ alert('Connect failed: '+e.message); }
 }
 async function saveStrip(){
@@ -323,9 +336,42 @@ async function pollLeds(){
     if(m && m.rgb_hex){ ledCount=m.count||0; ledRgb=hexToBytes(m.rgb_hex); drawPreview(); }
   }catch{}
 }
+async function loadNeighbors(){
+  try{
+    const data=await j('/api/v1/neighbors');
+    const list=data.neighbors||[];
+    if(!list.length){ neighbors.textContent='No other LumosOS devices found on this LAN.'; return; }
+    neighbors.textContent=list.map(n=>{
+      const host=n.hostname||'device';
+      const ip=n.ip||'?';
+      const ver=n.version?(' v'+n.version):'';
+      const leds=n.leds?(' · '+n.leds+' LEDs'):'';
+      return host+ver+leds+'\n  http://'+ip+(n.port&&n.port!==80?(':'+n.port):'');
+    }).join('\n\n');
+  }catch(e){ neighbors.textContent='Neighbors unavailable: '+e.message; }
+}
+async function loadMatter(){
+  try{
+    const m=await j('/api/v1/matter');
+    matterInfo.textContent=JSON.stringify({
+      enabled:m.enabled, commissioned:m.commissioned,
+      manual_code:m.manual_code, qr_payload:m.qr_payload,
+      discriminator:m.discriminator, passcode:m.passcode
+    },null,2);
+  }catch(e){ matterInfo.textContent='Matter unavailable: '+e.message; }
+}
+async function resetMatter(){
+  if(!confirm('Clear Matter fabrics and reboot? Wi‑Fi settings are kept.')) return;
+  try{
+    await fetch('/api/v1/matter/factory-reset',{method:'POST'});
+    alert('Matter reset — device rebooting');
+  }catch(e){ alert('Reset failed: '+e.message); }
+}
 function onWsMessage(m){ if(m.type==='state') renderStatus(m); }
 loadSettings(); refresh(); scanWifi(); drawPreview();
+loadNeighbors(); loadMatter();
 pollLeds(); setInterval(pollLeds,150); setInterval(refresh,5000);
+setInterval(loadNeighbors,30000);
 try{
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
   ws.onopen=()=>{wsLive=true}; ws.onclose=()=>{wsLive=false}; ws.onerror=()=>{wsLive=false};

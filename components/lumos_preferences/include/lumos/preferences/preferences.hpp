@@ -38,7 +38,7 @@ struct DeviceSettings {
     std::string last_used_plugin{"hyperhdr"};
     std::string wifi_ssid;
     std::string wifi_password;
-    std::string hostname{"lumosos"};
+    std::string hostname{"LumosOS"};
 
     // Static IPv4 (when wifi_use_static is true). Empty strings keep defaults on apply.
     bool wifi_use_static{false};

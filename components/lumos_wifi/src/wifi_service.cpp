@@ -1,13 +1,16 @@
 #include "lumos/wifi/wifi_service.hpp"
 #include "lumos/wifi/captive_dns.hpp"
 #include "lumos/core/logger.hpp"
+#include "lumos/core/types.hpp"
 
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "mdns.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -53,10 +56,44 @@ void WifiService::ensure_netif() {
     }
     if (sta_netif_ == nullptr) {
         sta_netif_ = esp_netif_create_default_wifi_sta();
+        apply_hostname();
     }
     if (ap_netif_ == nullptr) {
         ap_netif_ = esp_netif_create_default_wifi_ap();
     }
+}
+
+std::string WifiService::mdns_hostname_label(const std::string& hostname) {
+    std::string out;
+    out.reserve(hostname.size());
+    for (unsigned char c : hostname) {
+        if (std::isalnum(c) || c == '-') {
+            out.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return out.empty() ? "lumosos" : out;
+}
+
+void WifiService::apply_hostname() {
+    auto* netif = static_cast<esp_netif_t*>(sta_netif_);
+    if (netif == nullptr) {
+        return;
+    }
+    std::string hostname = preferences_.device().hostname;
+    if (hostname.empty()) {
+        hostname = "LumosOS";
+        preferences_.device().hostname = hostname;
+    }
+    // DHCP client hostname (what routers list). Cap to ESP-IDF limit.
+    if (hostname.size() > 32) {
+        hostname.resize(32);
+    }
+    esp_err_t err = esp_netif_set_hostname(netif, hostname.c_str());
+    if (err != ESP_OK) {
+        log.warn("esp_netif_set_hostname failed: %s", esp_err_to_name(err));
+        return;
+    }
+    log.info("STA DHCP hostname: %s", hostname.c_str());
 }
 
 void WifiService::on_sta_start() {
@@ -181,6 +218,7 @@ Result<void> WifiService::connect_sta(const std::string& ssid, const std::string
         effective_password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
 
     want_sta_connect_ = true;
+    apply_hostname();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
 
@@ -355,26 +393,124 @@ Result<void> WifiService::start_mdns() {
         mdns_started = true;
     }
 
-    const auto& hostname = preferences_.device().hostname;
-    mdns_hostname_set(hostname.c_str());
+    const std::string mdns_host = mdns_hostname_label(preferences_.device().hostname);
+    mdns_hostname_set(mdns_host.c_str());
     mdns_instance_name_set("LumosOS");
-
-    mdns_service_add("LumosOS", "_http", "_tcp", 80, nullptr, 0);
-    mdns_service_add("LumosOS", "_lumosos", "_tcp", 80, nullptr, 0);
 
     std::snprintf(mdns_leds_txt_, sizeof(mdns_leds_txt_), "%u",
                   static_cast<unsigned>(preferences_.device().led_count));
-    mdns_txt_item_t txt[] = {
+    std::snprintf(mdns_api_txt_, sizeof(mdns_api_txt_), "%s", kApiVersion.data());
+    static constexpr const char* kChipsetNames[] = {"ws2815", "ws2812b", "ws2813", "sk6812",
+                                                    "sk6812rgbw"};
+    const auto chip = static_cast<int>(preferences_.device().chipset);
+    const char* chip_name =
+        (chip >= 0 && chip < 5) ? kChipsetNames[chip] : kChipsetNames[0];
+    std::snprintf(mdns_chipset_txt_, sizeof(mdns_chipset_txt_), "%s", chip_name);
+
+    mdns_txt_item_t lumos_txt[] = {
+        {"path", "/"},
+        {"version", kAppVersion.data()},
+        {"api", mdns_api_txt_},
+        {"leds", mdns_leds_txt_},
+        {"chipset", mdns_chipset_txt_},
+    };
+    mdns_txt_item_t hyper_txt[] = {
         {"path", "/"},
         {"version", kAppVersion.data()},
         {"leds", mdns_leds_txt_},
         {"proto", "ddp"},
     };
-    mdns_service_add("LumosOS", "_hyperk", "_tcp", 80, txt, 4);
-    mdns_service_add("LumosOS", "_wled", "_tcp", 80, txt, 4);
 
-    log.info("mDNS started as %s.local", hostname.c_str());
+    // Re-add is idempotent enough for our use; ignore already-exists errors.
+    mdns_service_add("LumosOS", "_http", "_tcp", 80, nullptr, 0);
+    mdns_service_add("LumosOS", "_lumosos", "_tcp", 80, lumos_txt, 5);
+    mdns_service_txt_set("_lumosos", "_tcp", lumos_txt, 5);
+    mdns_service_add("LumosOS", "_hyperk", "_tcp", 80, hyper_txt, 4);
+    mdns_service_add("LumosOS", "_wled", "_tcp", 80, hyper_txt, 4);
+
+    log.info("mDNS started as %s.local", mdns_host.c_str());
     return Result<void>::ok();
+}
+
+void WifiService::refresh_neighbors_if_stale() {
+    const std::int64_t now_ms = esp_timer_get_time() / 1000;
+    constexpr std::int64_t kTtlMs = 30000;
+    if (neighbors_cache_ms_ != 0 && (now_ms - neighbors_cache_ms_) < kTtlMs) {
+        return;
+    }
+
+    mdns_result_t* results = nullptr;
+    esp_err_t err = mdns_query_ptr("_lumosos", "_tcp", 2000, 20, &results);
+    if (err != ESP_OK) {
+        log.warn("mDNS neighbor browse failed: %s", esp_err_to_name(err));
+        neighbors_cache_ms_ = now_ms;
+        return;
+    }
+
+    const std::string self_host = mdns_hostname_label(preferences_.device().hostname);
+    const std::string self_ip = status_.ip;
+
+    std::vector<NeighborInfo> found;
+    for (mdns_result_t* r = results; r != nullptr; r = r->next) {
+        NeighborInfo n;
+        if (r->hostname) {
+            n.hostname = r->hostname;
+        } else if (r->instance_name) {
+            n.hostname = r->instance_name;
+        }
+        n.port = r->port ? r->port : 80;
+        for (mdns_ip_addr_t* a = r->addr; a != nullptr; a = a->next) {
+            if (a->addr.type == ESP_IPADDR_TYPE_V4) {
+                char ip_str[16];
+                esp_ip4addr_ntoa(&a->addr.u_addr.ip4, ip_str, sizeof(ip_str));
+                n.ip = ip_str;
+                break;
+            }
+        }
+        for (size_t i = 0; i < r->txt_count; ++i) {
+            if (r->txt[i].key == nullptr || r->txt[i].value == nullptr) {
+                continue;
+            }
+            const std::string key = r->txt[i].key;
+            const std::string val = r->txt[i].value;
+            if (key == "version") {
+                n.version = val;
+            } else if (key == "api") {
+                n.api = val;
+            } else if (key == "leds") {
+                n.leds = val;
+            } else if (key == "chipset") {
+                n.chipset = val;
+            } else if (key == "path") {
+                n.path = val;
+            }
+        }
+        if (n.path.empty()) {
+            n.path = "/";
+        }
+
+        std::string host_lc = mdns_hostname_label(n.hostname);
+        if (!self_host.empty() && host_lc == self_host) {
+            continue;
+        }
+        if (!self_ip.empty() && n.ip == self_ip) {
+            continue;
+        }
+        if (n.ip.empty() && n.hostname.empty()) {
+            continue;
+        }
+        found.push_back(std::move(n));
+    }
+    mdns_query_results_free(results);
+
+    neighbors_cache_ = std::move(found);
+    neighbors_cache_ms_ = now_ms;
+    log.info("mDNS neighbors: %u", static_cast<unsigned>(neighbors_cache_.size()));
+}
+
+std::vector<NeighborInfo> WifiService::neighbors() {
+    refresh_neighbors_if_stale();
+    return neighbors_cache_;
 }
 
 WifiStatus WifiService::status() const {
