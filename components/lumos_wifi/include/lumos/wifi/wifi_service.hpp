@@ -23,7 +23,8 @@ struct WifiStatus {
     std::string ip;
     std::string gateway;
     std::string netmask;
-    std::string dns;
+    std::string dns1;
+    std::string dns2;
     std::string ssid;
     int rssi{0};
 };

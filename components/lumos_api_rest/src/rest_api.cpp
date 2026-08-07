@@ -236,7 +236,8 @@ esp_err_t RestApi::get_settings(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "wifi_ip", d.wifi_ip.c_str());
     cJSON_AddStringToObject(root, "wifi_gateway", d.wifi_gateway.c_str());
     cJSON_AddStringToObject(root, "wifi_netmask", d.wifi_netmask.c_str());
-    cJSON_AddStringToObject(root, "wifi_dns", d.wifi_dns.c_str());
+    cJSON_AddStringToObject(root, "wifi_dns1", d.wifi_dns1.c_str());
+    cJSON_AddStringToObject(root, "wifi_dns2", d.wifi_dns2.c_str());
     char* printed = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     esp_err_t err = send_json(req, printed);
@@ -297,8 +298,11 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_netmask"); cJSON_IsString(v)) {
         d.wifi_netmask = v->valuestring;
     }
-    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_dns"); cJSON_IsString(v)) {
-        d.wifi_dns = v->valuestring;
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_dns1"); cJSON_IsString(v)) {
+        d.wifi_dns1 = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_dns2"); cJSON_IsString(v)) {
+        d.wifi_dns2 = v->valuestring;
     }
     self->preferences_.save();
     cJSON_Delete(json);
@@ -322,7 +326,8 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(w, "ip", wifi.ip.c_str());
     cJSON_AddStringToObject(w, "gateway", wifi.gateway.c_str());
     cJSON_AddStringToObject(w, "netmask", wifi.netmask.c_str());
-    cJSON_AddStringToObject(w, "dns", wifi.dns.c_str());
+    cJSON_AddStringToObject(w, "dns1", wifi.dns1.c_str());
+    cJSON_AddStringToObject(w, "dns2", wifi.dns2.c_str());
     cJSON_AddStringToObject(w, "ssid", wifi.ssid.c_str());
     cJSON_AddNumberToObject(w, "mode", static_cast<int>(wifi.mode));
     char* printed = cJSON_PrintUnformatted(root);
@@ -385,8 +390,11 @@ esp_err_t RestApi::post_wifi(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "netmask"); cJSON_IsString(v)) {
         d.wifi_netmask = v->valuestring;
     }
-    if (const cJSON* v = cJSON_GetObjectItem(json, "dns"); cJSON_IsString(v)) {
-        d.wifi_dns = v->valuestring;
+    if (const cJSON* v = cJSON_GetObjectItem(json, "dns1"); cJSON_IsString(v)) {
+        d.wifi_dns1 = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "dns2"); cJSON_IsString(v)) {
+        d.wifi_dns2 = v->valuestring;
     }
     if (d.wifi_use_static && (d.wifi_ip.empty() || d.wifi_gateway.empty())) {
         cJSON_Delete(json);

@@ -112,7 +112,7 @@ Result<void> WifiService::apply_sta_ip_config() {
     }
 
     const std::string& mask = d.wifi_netmask.empty() ? "255.255.255.0" : d.wifi_netmask;
-    const std::string& dns = d.wifi_dns.empty() ? d.wifi_gateway : d.wifi_dns;
+    const std::string& dns1 = d.wifi_dns1.empty() ? d.wifi_gateway : d.wifi_dns1;
 
     esp_netif_dhcpc_stop(netif);
 
@@ -128,19 +128,32 @@ Result<void> WifiService::apply_sta_ip_config() {
         return Result<void>::fail(ErrorCode::NetworkError, "esp_netif_set_ip_info failed");
     }
 
-    esp_netif_dns_info_t dns_info{};
-    dns_info.ip.type = ESP_IPADDR_TYPE_V4;
-    if (esp_netif_str_to_ip4(dns.c_str(), &dns_info.ip.u_addr.ip4) != ESP_OK) {
-        return Result<void>::fail(ErrorCode::InvalidArgument, "invalid DNS address");
+    esp_netif_dns_info_t dns_main{};
+    dns_main.ip.type = ESP_IPADDR_TYPE_V4;
+    if (esp_netif_str_to_ip4(dns1.c_str(), &dns_main.ip.u_addr.ip4) != ESP_OK) {
+        return Result<void>::fail(ErrorCode::InvalidArgument, "invalid DNS 1 address");
     }
-    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_info);
+    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main);
+
+    if (!d.wifi_dns2.empty()) {
+        esp_netif_dns_info_t dns_backup{};
+        dns_backup.ip.type = ESP_IPADDR_TYPE_V4;
+        if (esp_netif_str_to_ip4(d.wifi_dns2.c_str(), &dns_backup.ip.u_addr.ip4) != ESP_OK) {
+            return Result<void>::fail(ErrorCode::InvalidArgument, "invalid DNS 2 address");
+        }
+        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns_backup);
+        status_.dns2 = d.wifi_dns2;
+    } else {
+        status_.dns2.clear();
+    }
 
     status_.use_static = true;
     status_.ip = d.wifi_ip;
     status_.gateway = d.wifi_gateway;
     status_.netmask = mask;
-    status_.dns = dns;
-    log.info("STA IP mode: static %s gw %s", d.wifi_ip.c_str(), d.wifi_gateway.c_str());
+    status_.dns1 = dns1;
+    log.info("STA IP mode: static %s gw %s dns1 %s", d.wifi_ip.c_str(), d.wifi_gateway.c_str(),
+             dns1.c_str());
     return Result<void>::ok();
 }
 
@@ -305,13 +318,23 @@ void WifiService::on_got_ip() {
     status_.netmask = mask_str;
     status_.use_static = preferences_.device().wifi_use_static;
 
-    esp_netif_dns_info_t dns_info{};
+    esp_netif_dns_info_t dns_main{};
     if (esp_netif_get_dns_info(static_cast<esp_netif_t*>(sta_netif_), ESP_NETIF_DNS_MAIN,
-                               &dns_info) == ESP_OK &&
-        dns_info.ip.type == ESP_IPADDR_TYPE_V4) {
+                               &dns_main) == ESP_OK &&
+        dns_main.ip.type == ESP_IPADDR_TYPE_V4) {
         char dns_str[16];
-        esp_ip4addr_ntoa(&dns_info.ip.u_addr.ip4, dns_str, sizeof(dns_str));
-        status_.dns = dns_str;
+        esp_ip4addr_ntoa(&dns_main.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+        status_.dns1 = dns_str;
+    }
+    esp_netif_dns_info_t dns_backup{};
+    if (esp_netif_get_dns_info(static_cast<esp_netif_t*>(sta_netif_), ESP_NETIF_DNS_BACKUP,
+                               &dns_backup) == ESP_OK &&
+        dns_backup.ip.type == ESP_IPADDR_TYPE_V4 && dns_backup.ip.u_addr.ip4.addr != 0) {
+        char dns_str[16];
+        esp_ip4addr_ntoa(&dns_backup.ip.u_addr.ip4, dns_str, sizeof(dns_str));
+        status_.dns2 = dns_str;
+    } else {
+        status_.dns2.clear();
     }
 
     log.info("Got IP: %s (gw %s)", ip_str, gw_str);

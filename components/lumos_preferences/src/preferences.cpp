@@ -125,7 +125,12 @@ Result<void> Preferences::load() {
     device_.wifi_ip = nvs_get_str_key(handle, "wifi_ip", device_.wifi_ip);
     device_.wifi_gateway = nvs_get_str_key(handle, "wifi_gw", device_.wifi_gateway);
     device_.wifi_netmask = nvs_get_str_key(handle, "wifi_mask", device_.wifi_netmask);
-    device_.wifi_dns = nvs_get_str_key(handle, "wifi_dns", device_.wifi_dns);
+    device_.wifi_dns1 = nvs_get_str_key(handle, "wifi_dns1", device_.wifi_dns1);
+    device_.wifi_dns2 = nvs_get_str_key(handle, "wifi_dns2", device_.wifi_dns2);
+    // Migrate older single-dns key if present and dns1 empty.
+    if (device_.wifi_dns1.empty()) {
+        device_.wifi_dns1 = nvs_get_str_key(handle, "wifi_dns", "");
+    }
 
     nvs_close(handle);
     return load_plugin_blob();
@@ -160,7 +165,8 @@ Result<void> Preferences::save() {
     nvs_set_str_key(handle, "wifi_ip", device_.wifi_ip);
     nvs_set_str_key(handle, "wifi_gw", device_.wifi_gateway);
     nvs_set_str_key(handle, "wifi_mask", device_.wifi_netmask);
-    nvs_set_str_key(handle, "wifi_dns", device_.wifi_dns);
+    nvs_set_str_key(handle, "wifi_dns1", device_.wifi_dns1);
+    nvs_set_str_key(handle, "wifi_dns2", device_.wifi_dns2);
 
     err = nvs_commit(handle);
     nvs_close(handle);

@@ -32,7 +32,8 @@ struct DeviceSettings {
     std::string wifi_ip;       // e.g. 192.168.1.50
     std::string wifi_gateway;  // e.g. 192.168.1.1
     std::string wifi_netmask{"255.255.255.0"};
-    std::string wifi_dns;      // optional; defaults to gateway if empty
+    std::string wifi_dns1;     // primary DNS; defaults to gateway if empty
+    std::string wifi_dns2;     // secondary DNS; optional
 };
 
 class Preferences {

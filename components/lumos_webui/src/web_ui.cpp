@@ -51,9 +51,10 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
     <div><label>IP address</label><input id="ip" placeholder="192.168.1.50"/></div>
     <div><label>Gateway</label><input id="gateway" placeholder="192.168.1.1"/></div>
   </div>
+  <label>Subnet mask</label><input id="netmask" placeholder="255.255.255.0"/>
   <div class="grid2">
-    <div><label>Subnet mask</label><input id="netmask" placeholder="255.255.255.0"/></div>
-    <div><label>DNS</label><input id="dns" placeholder="optional, defaults to gateway"/></div>
+    <div><label>DNS 1</label><input id="dns1" placeholder="e.g. 1.1.1.1 (default: gateway)"/></div>
+    <div><label>DNS 2</label><input id="dns2" placeholder="e.g. 8.8.8.8 (optional)"/></div>
   </div>
 </div>
 <button onclick="saveWifi()">Save &amp; Connect</button>
@@ -85,7 +86,8 @@ async function loadSettings(){
     ip.value=s.wifi_ip||'';
     gateway.value=s.wifi_gateway||'';
     netmask.value=s.wifi_netmask||'255.255.255.0';
-    dns.value=s.wifi_dns||'';
+    dns1.value=s.wifi_dns1||'';
+    dns2.value=s.wifi_dns2||'';
     toggleStatic();
   }catch{}
 }
@@ -97,7 +99,8 @@ async function refresh(){
   if(!ip.value && s.wifi && s.wifi.ip) ip.value=s.wifi.ip;
   if(!gateway.value && s.wifi && s.wifi.gateway) gateway.value=s.wifi.gateway;
   if((!netmask.value || netmask.value==='255.255.255.0') && s.wifi && s.wifi.netmask) netmask.value=s.wifi.netmask;
-  if(!dns.value && s.wifi && s.wifi.dns) dns.value=s.wifi.dns;
+  if(!dns1.value && s.wifi && s.wifi.dns1) dns1.value=s.wifi.dns1;
+  if(!dns2.value && s.wifi && s.wifi.dns2) dns2.value=s.wifi.dns2;
   const p=await j('/api/v1/plugins');
   const sel=document.getElementById('plugin');
   sel.innerHTML='';
@@ -143,7 +146,8 @@ async function saveWifi(){
     ip:ip.value.trim(),
     gateway:gateway.value.trim(),
     netmask:netmask.value.trim()||'255.255.255.0',
-    dns:dns.value.trim()
+    dns1:dns1.value.trim(),
+    dns2:dns2.value.trim()
   };
   try{
     await j('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
