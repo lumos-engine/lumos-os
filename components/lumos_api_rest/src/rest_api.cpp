@@ -232,6 +232,11 @@ esp_err_t RestApi::get_settings(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "hostname", d.hostname.c_str());
     cJSON_AddStringToObject(root, "last_used_plugin", d.last_used_plugin.c_str());
     cJSON_AddStringToObject(root, "wifi_ssid", d.wifi_ssid.c_str());
+    cJSON_AddBoolToObject(root, "wifi_use_static", d.wifi_use_static);
+    cJSON_AddStringToObject(root, "wifi_ip", d.wifi_ip.c_str());
+    cJSON_AddStringToObject(root, "wifi_gateway", d.wifi_gateway.c_str());
+    cJSON_AddStringToObject(root, "wifi_netmask", d.wifi_netmask.c_str());
+    cJSON_AddStringToObject(root, "wifi_dns", d.wifi_dns.c_str());
     char* printed = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     esp_err_t err = send_json(req, printed);
@@ -280,6 +285,21 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "hostname"); cJSON_IsString(v)) {
         d.hostname = v->valuestring;
     }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_use_static"); cJSON_IsBool(v)) {
+        d.wifi_use_static = cJSON_IsTrue(v);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_ip"); cJSON_IsString(v)) {
+        d.wifi_ip = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_gateway"); cJSON_IsString(v)) {
+        d.wifi_gateway = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_netmask"); cJSON_IsString(v)) {
+        d.wifi_netmask = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_dns"); cJSON_IsString(v)) {
+        d.wifi_dns = v->valuestring;
+    }
     self->preferences_.save();
     cJSON_Delete(json);
     return send_json(req, "{\"ok\":true}");
@@ -298,7 +318,11 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON* w = cJSON_AddObjectToObject(root, "wifi");
     cJSON_AddBoolToObject(w, "connected", wifi.connected);
+    cJSON_AddBoolToObject(w, "use_static", wifi.use_static);
     cJSON_AddStringToObject(w, "ip", wifi.ip.c_str());
+    cJSON_AddStringToObject(w, "gateway", wifi.gateway.c_str());
+    cJSON_AddStringToObject(w, "netmask", wifi.netmask.c_str());
+    cJSON_AddStringToObject(w, "dns", wifi.dns.c_str());
     cJSON_AddStringToObject(w, "ssid", wifi.ssid.c_str());
     cJSON_AddNumberToObject(w, "mode", static_cast<int>(wifi.mode));
     char* printed = cJSON_PrintUnformatted(root);
@@ -342,15 +366,38 @@ esp_err_t RestApi::post_wifi(httpd_req_t* req) {
     if (json == nullptr) {
         return send_json(req, "{\"error\":\"invalid json\"}", 400);
     }
+    auto& d = self->preferences_.device();
     const cJSON* ssid = cJSON_GetObjectItem(json, "ssid");
     const cJSON* pass = cJSON_GetObjectItem(json, "password");
     if (!cJSON_IsString(ssid)) {
         cJSON_Delete(json);
         return send_json(req, "{\"error\":\"ssid required\"}", 400);
     }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "use_static"); cJSON_IsBool(v)) {
+        d.wifi_use_static = cJSON_IsTrue(v);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "ip"); cJSON_IsString(v)) {
+        d.wifi_ip = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "gateway"); cJSON_IsString(v)) {
+        d.wifi_gateway = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "netmask"); cJSON_IsString(v)) {
+        d.wifi_netmask = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "dns"); cJSON_IsString(v)) {
+        d.wifi_dns = v->valuestring;
+    }
+    if (d.wifi_use_static && (d.wifi_ip.empty() || d.wifi_gateway.empty())) {
+        cJSON_Delete(json);
+        return send_json(req, "{\"error\":\"static IP requires ip and gateway\"}", 400);
+    }
     const char* password = cJSON_IsString(pass) ? pass->valuestring : "";
-    self->wifi_.connect_sta(ssid->valuestring, password);
+    auto result = self->wifi_.connect_sta(ssid->valuestring, password);
     cJSON_Delete(json);
+    if (!result) {
+        return send_json(req, "{\"error\":\"connect failed\"}", 400);
+    }
     return send_json(req, "{\"ok\":true}");
 }
 

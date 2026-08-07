@@ -19,7 +19,11 @@ enum class WifiMode {
 struct WifiStatus {
     WifiMode mode{WifiMode::Off};
     bool connected{false};
+    bool use_static{false};
     std::string ip;
+    std::string gateway;
+    std::string netmask;
+    std::string dns;
     std::string ssid;
     int rssi{0};
 };
@@ -57,6 +61,7 @@ public:
 private:
     void ensure_netif();
     Result<void> start_sta_from_prefs();
+    Result<void> apply_sta_ip_config();
 
     Preferences& preferences_;
     WifiStatus status_{};

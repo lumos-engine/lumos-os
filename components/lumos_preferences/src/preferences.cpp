@@ -119,6 +119,14 @@ Result<void> Preferences::load() {
     device_.wifi_password = nvs_get_str_key(handle, "wifi_pass", device_.wifi_password);
     device_.hostname = nvs_get_str_key(handle, "hostname", device_.hostname);
 
+    std::uint8_t use_static = device_.wifi_use_static ? 1 : 0;
+    get_u8("wifi_static", use_static);
+    device_.wifi_use_static = use_static != 0;
+    device_.wifi_ip = nvs_get_str_key(handle, "wifi_ip", device_.wifi_ip);
+    device_.wifi_gateway = nvs_get_str_key(handle, "wifi_gw", device_.wifi_gateway);
+    device_.wifi_netmask = nvs_get_str_key(handle, "wifi_mask", device_.wifi_netmask);
+    device_.wifi_dns = nvs_get_str_key(handle, "wifi_dns", device_.wifi_dns);
+
     nvs_close(handle);
     return load_plugin_blob();
 }
@@ -148,6 +156,11 @@ Result<void> Preferences::save() {
     nvs_set_str_key(handle, "wifi_ssid", device_.wifi_ssid);
     nvs_set_str_key(handle, "wifi_pass", device_.wifi_password);
     nvs_set_str_key(handle, "hostname", device_.hostname);
+    nvs_set_u8(handle, "wifi_static", device_.wifi_use_static ? 1 : 0);
+    nvs_set_str_key(handle, "wifi_ip", device_.wifi_ip);
+    nvs_set_str_key(handle, "wifi_gw", device_.wifi_gateway);
+    nvs_set_str_key(handle, "wifi_mask", device_.wifi_netmask);
+    nvs_set_str_key(handle, "wifi_dns", device_.wifi_dns);
 
     err = nvs_commit(handle);
     nvs_close(handle);

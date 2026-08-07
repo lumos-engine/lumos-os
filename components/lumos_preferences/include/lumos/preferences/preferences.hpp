@@ -26,6 +26,13 @@ struct DeviceSettings {
     std::string wifi_ssid;
     std::string wifi_password;
     std::string hostname{"lumosos"};
+
+    // Static IPv4 (when wifi_use_static is true). Empty strings keep defaults on apply.
+    bool wifi_use_static{false};
+    std::string wifi_ip;       // e.g. 192.168.1.50
+    std::string wifi_gateway;  // e.g. 192.168.1.1
+    std::string wifi_netmask{"255.255.255.0"};
+    std::string wifi_dns;      // optional; defaults to gateway if empty
 };
 
 class Preferences {
