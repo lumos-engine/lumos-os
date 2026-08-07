@@ -2,7 +2,7 @@
 
 Premium, extensible firmware for ESP32-based addressable LED controllers.
 
-LumosOS is an LED operating system. HyperHDR is one plugin among many.
+LumosOS 0.1 is an LED operating system. HyperHDR is one plugin among many.
 
 ## Hardware (v0.1)
 
