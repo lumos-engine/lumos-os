@@ -1,0 +1,18 @@
+#pragma once
+
+#include "lumos/core/result.hpp"
+
+#include <esp_http_server.h>
+
+namespace lumos {
+
+class WebUi {
+public:
+    Result<void> start(httpd_handle_t server);
+
+private:
+    static esp_err_t get_index(httpd_req_t* req);
+    static esp_err_t get_captive(httpd_req_t* req);
+};
+
+} // namespace lumos
