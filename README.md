@@ -58,4 +58,15 @@ See `components/` for modular services (`lumos_core`, `lumos_plugin`, `lumos_ren
 
 ## License
 
-TBD (recommended MIT or Apache-2.0).
+LumosOS — including **all past and present commits** in this repository — is
+licensed under the [GNU General Public License v3.0](LICENSE), with
+[Additional Terms](NOTICE) under GPL §7.
+
+In short:
+
+- Derivative works and redistributed copies must remain open source under GPL-3.0.
+- Products built with LumosOS must give clear front-page credit that LumosOS was used to build them (see `NOTICE`).
+
+```
+Copyright (C) 2026 Shivansh Tyagi
+```
