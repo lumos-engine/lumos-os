@@ -6,13 +6,13 @@ LumosOS is an LED operating system. HyperHDR is one plugin among many.
 
 ## Hardware (v0.1)
 
-| Item | Value |
-|------|-------|
-| MCU | ESP32-WROOM-32 |
-| LEDs | WS2815 (primary) |
-| Default count | 150 |
-| Default GPIO | 16 |
-| Power | 12V, inject at both ends |
+| Item          | Value                    |
+| ------------- | ------------------------ |
+| MCU           | ESP32-WROOM-32           |
+| LEDs          | WS2815 (primary)         |
+| Default count | 150                      |
+| Default GPIO  | 16                       |
+| Power         | 12V, inject at both ends |
 
 ## Features (v0.1)
 
