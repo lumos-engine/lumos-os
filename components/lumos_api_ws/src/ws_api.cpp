@@ -18,9 +18,12 @@ WsApi::WsApi(Preferences& preferences, PluginManager& plugins, Renderer& rendere
     : preferences_(preferences), plugins_(plugins), renderer_(renderer), wifi_(wifi) {}
 
 std::string WsApi::build_state_json() const {
+    // Keep the same shape as GET /api/v1/status so the UI never flickers between schemas.
     const auto wifi = wifi_.status();
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "state");
+    cJSON_AddStringToObject(root, "name", kAppName.data());
+    cJSON_AddStringToObject(root, "version", kAppVersion.data());
     cJSON_AddStringToObject(root, "active_plugin", plugins_.active_id().c_str());
     cJSON_AddBoolToObject(root, "in_fallback", plugins_.in_fallback());
     cJSON_AddNumberToObject(root, "brightness", renderer_.brightness());
@@ -28,8 +31,14 @@ std::string WsApi::build_state_json() const {
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON* w = cJSON_AddObjectToObject(root, "wifi");
     cJSON_AddBoolToObject(w, "connected", wifi.connected);
+    cJSON_AddBoolToObject(w, "use_static", wifi.use_static);
     cJSON_AddStringToObject(w, "ip", wifi.ip.c_str());
+    cJSON_AddStringToObject(w, "gateway", wifi.gateway.c_str());
+    cJSON_AddStringToObject(w, "netmask", wifi.netmask.c_str());
+    cJSON_AddStringToObject(w, "dns1", wifi.dns1.c_str());
+    cJSON_AddStringToObject(w, "dns2", wifi.dns2.c_str());
     cJSON_AddStringToObject(w, "ssid", wifi.ssid.c_str());
+    cJSON_AddNumberToObject(w, "mode", static_cast<int>(wifi.mode));
     char* printed = cJSON_PrintUnformatted(root);
     std::string out = printed ? printed : "{}";
     cJSON_free(printed);

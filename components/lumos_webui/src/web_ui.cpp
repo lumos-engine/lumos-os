@@ -74,9 +74,21 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </section>
 </main>
 <script>
+let wsLive=false;
 async function j(url,opts){const r=await fetch(url,opts); if(!r.ok) throw new Error(await r.text()); return r.json()}
 function toggleStatic(){
   document.getElementById('staticFields').classList.toggle('show', useStatic.checked);
+}
+function renderStatus(s){
+  const view=Object.assign({},s);
+  delete view.type;
+  document.getElementById('status').textContent=JSON.stringify(view,null,2);
+  if(typeof s.brightness==='number') document.getElementById('brightness').value=s.brightness;
+  if(!ip.value && s.wifi && s.wifi.ip) ip.value=s.wifi.ip;
+  if(!gateway.value && s.wifi && s.wifi.gateway) gateway.value=s.wifi.gateway;
+  if((!netmask.value || netmask.value==='255.255.255.0') && s.wifi && s.wifi.netmask) netmask.value=s.wifi.netmask;
+  if(!dns1.value && s.wifi && s.wifi.dns1) dns1.value=s.wifi.dns1;
+  if(!dns2.value && s.wifi && s.wifi.dns2) dns2.value=s.wifi.dns2;
 }
 async function loadSettings(){
   try{
@@ -91,25 +103,24 @@ async function loadSettings(){
     toggleStatic();
   }catch{}
 }
-async function refresh(){
-  const s=await j('/api/v1/status');
-  document.getElementById('status').textContent=JSON.stringify(s,null,2);
-  document.getElementById('brightness').value=s.brightness;
-  // Prefill static fields from live DHCP values if empty
-  if(!ip.value && s.wifi && s.wifi.ip) ip.value=s.wifi.ip;
-  if(!gateway.value && s.wifi && s.wifi.gateway) gateway.value=s.wifi.gateway;
-  if((!netmask.value || netmask.value==='255.255.255.0') && s.wifi && s.wifi.netmask) netmask.value=s.wifi.netmask;
-  if(!dns1.value && s.wifi && s.wifi.dns1) dns1.value=s.wifi.dns1;
-  if(!dns2.value && s.wifi && s.wifi.dns2) dns2.value=s.wifi.dns2;
+async function refreshPlugins(){
   const p=await j('/api/v1/plugins');
   const sel=document.getElementById('plugin');
+  const current=sel.value;
   sel.innerHTML='';
   for(const plug of p.plugins){
     const o=document.createElement('option');
     o.value=plug.id;o.textContent=plug.name;
-    if(plug.id===p.active)o.selected=true;
+    if(plug.id===p.active || plug.id===current)o.selected=true;
     sel.appendChild(o);
   }
+}
+async function refresh(){
+  if(!wsLive){
+    const s=await j('/api/v1/status');
+    renderStatus(s);
+  }
+  await refreshPlugins();
 }
 async function scanWifi(){
   const sel=document.getElementById('netlist');
@@ -169,12 +180,13 @@ async function uploadOta(){
   const r=await fetch('/api/v1/ota',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
   ota.textContent=await r.text();
 }
-loadSettings(); refresh(); scanWifi(); setInterval(refresh,3000);
+loadSettings(); refresh(); scanWifi(); setInterval(refresh,5000);
 try{
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
-  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='state'){
-    document.getElementById('status').textContent=JSON.stringify(m,null,2);
-  }}catch{}};
+  ws.onopen=()=>{wsLive=true};
+  ws.onclose=()=>{wsLive=false};
+  ws.onerror=()=>{wsLive=false};
+  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='state') renderStatus(m);}catch{}};
 }catch{}
 </script>
 </body>
