@@ -7,6 +7,7 @@
 namespace lumos {
 namespace {
 
+// FastLED-style 1D fire. sparking is a probability (0–255), not sparks-per-frame.
 class FirePlugin final : public IPlugin {
 public:
     Result<void> initialize(PluginContext& ctx) override {
@@ -16,55 +17,92 @@ public:
         load_params();
         return Result<void>::ok();
     }
+
     Result<void> start() override {
         load_params();
         std::fill(heat_.begin(), heat_.end(), 0);
+        accum_ = 0.0f;
         return Result<void>::ok();
     }
+
     Result<void> stop() override { return Result<void>::ok(); }
 
-    void update(float) override {
+    void update(float dt) override {
         load_params();
-        if (heat_.size() != led_count_) {
-            heat_.assign(led_count_, 0);
+        if (heat_.empty()) {
+            return;
         }
-        // Classic heat-map fire along the strip.
-        for (LedIndex i = 0; i < led_count_; ++i) {
-            const int cool = (std::rand() % ((cooling_ * 10 / std::max<int>(led_count_, 1)) + 2));
-            heat_[i] = static_cast<std::uint8_t>(heat_[i] > cool ? heat_[i] - cool : 0);
-        }
-        for (int k = static_cast<int>(led_count_) - 1; k >= 2; --k) {
-            heat_[k] = (heat_[k - 1] + heat_[k - 2] + heat_[k - 2]) / 3;
-        }
-        for (int j = 0; j < sparking_; ++j) {
-            const int y = std::rand() % std::max<int>(led_count_, 1);
-            const int v = heat_[y] + (std::rand() % 160) + 60;
-            heat_[y] = static_cast<std::uint8_t>(std::min(255, v));
+        // Cap simulation to ~33 Hz so 60 FPS render doesn't overdrive heat.
+        accum_ += dt;
+        while (accum_ >= kStepSec) {
+            accum_ -= kStepSec;
+            step_fire();
         }
     }
 
     void render(Framebuffer& fb) override {
-        led_count_ = fb.size();
-        if (heat_.size() != led_count_) {
+        if (heat_.size() != fb.size()) {
+            led_count_ = fb.size();
             heat_.assign(led_count_, 0);
         }
+        const float intensity = intensity_ / 100.0f;
         for (LedIndex i = 0; i < fb.size(); ++i) {
-            const std::uint8_t t = heat_[i];
-            Rgb c;
-            if (t > 170) {
-                c = {255, 255, static_cast<std::uint8_t>((t - 170) * 3)};
-            } else if (t > 85) {
-                c = {255, static_cast<std::uint8_t>((t - 85) * 3), 0};
-            } else {
-                c = {static_cast<std::uint8_t>(t * 3), 0, 0};
-            }
-            fb[i] = scale_rgb(c, intensity_ / 100.0f);
+            fb[i] = scale_rgb(heat_to_color(heat_[i]), intensity);
         }
     }
 
     const PluginDescriptor& descriptor() const override { return desc_; }
 
 private:
+    static constexpr float kStepSec = 1.0f / 33.0f;
+
+    static Rgb heat_to_color(std::uint8_t t) {
+        // Black → red → orange → yellow (not white).
+        if (t < 85) {
+            return {static_cast<std::uint8_t>(t * 3), 0, 0};
+        }
+        if (t < 170) {
+            return {255, static_cast<std::uint8_t>((t - 85) * 3), 0};
+        }
+        return {255, 255, static_cast<std::uint8_t>((t - 170))}; // soft yellow, not full white
+    }
+
+    void step_fire() {
+        const int n = static_cast<int>(heat_.size());
+        if (n <= 0) {
+            return;
+        }
+
+        // 1) Cool every cell.
+        for (int i = 0; i < n; ++i) {
+            const int cool_range = (cooling_ * 10 / n) + 2;
+            const int cool = std::rand() % cool_range;
+            heat_[i] = static_cast<std::uint8_t>(heat_[i] > cool ? heat_[i] - cool : 0);
+        }
+
+        // 2) Diffuse along the strip (both directions for a perimeter).
+        std::vector<std::uint8_t> next = heat_;
+        for (int i = 0; i < n; ++i) {
+            const int left = (i + n - 1) % n;
+            const int right = (i + 1) % n;
+            next[i] = static_cast<std::uint8_t>((heat_[i] + heat_[left] + heat_[right]) / 3);
+        }
+        heat_.swap(next);
+
+        // 3) Random sparks — probability out of 255 (FastLED SPARKING semantics).
+        if ((std::rand() % 255) < sparking_) {
+            const int y = std::rand() % n;
+            const int v = static_cast<int>(heat_[y]) + 160 + (std::rand() % 95);
+            heat_[y] = static_cast<std::uint8_t>(std::min(255, v));
+        }
+        // Occasional second ember for denser looks when sparking is high.
+        if (sparking_ > 140 && (std::rand() % 255) < (sparking_ - 140)) {
+            const int y = std::rand() % n;
+            const int v = static_cast<int>(heat_[y]) + 120 + (std::rand() % 80);
+            heat_[y] = static_cast<std::uint8_t>(std::min(255, v));
+        }
+    }
+
     void load_params() {
         if (!prefs_) {
             return;
@@ -81,6 +119,7 @@ private:
     Preferences* prefs_{nullptr};
     LedIndex led_count_{0};
     std::vector<std::uint8_t> heat_;
+    float accum_{0.0f};
     int cooling_{55};
     int sparking_{120};
     int intensity_{90};
@@ -96,7 +135,7 @@ private:
                  .default_value = "55",
                  .min_value = "20",
                  .max_value = "100",
-                 .description = "How quickly flames cool",
+                 .description = "How quickly flames cool (higher = shorter flickers)",
                  .group = "look",
                  .step = "1"},
                 {.id = "sparking",
@@ -105,7 +144,7 @@ private:
                  .default_value = "120",
                  .min_value = "20",
                  .max_value = "200",
-                 .description = "Spark chance / intensity",
+                 .description = "Spark probability (out of 255), not sparks per frame",
                  .group = "motion",
                  .step = "1"},
                 {.id = "intensity",
