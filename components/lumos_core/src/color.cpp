@@ -63,4 +63,34 @@ Rgb mix_rgb(Rgb a, Rgb b, float t) {
     };
 }
 
+Rgbw rgb_to_rgbw(Rgb c, WhiteAlgorithm algo) {
+    (void)algo; // only ExtractMin for v0.2
+    const std::uint8_t w = std::min({c.r, c.g, c.b});
+    return Rgbw{
+        static_cast<std::uint8_t>(c.r - w),
+        static_cast<std::uint8_t>(c.g - w),
+        static_cast<std::uint8_t>(c.b - w),
+        w,
+    };
+}
+
+Rgb scale_rgbw_to_rgb_preview(Rgbw c) {
+    // Approximate for UI: fold white back into RGB.
+    return Rgb{
+        static_cast<std::uint8_t>(std::min(255, static_cast<int>(c.r) + c.w)),
+        static_cast<std::uint8_t>(std::min(255, static_cast<int>(c.g) + c.w)),
+        static_cast<std::uint8_t>(std::min(255, static_cast<int>(c.b) + c.w)),
+    };
+}
+
+Rgbw scale_rgbw(Rgbw c, float factor) {
+    factor = std::clamp(factor, 0.0f, 1.0f);
+    return Rgbw{
+        static_cast<std::uint8_t>(c.r * factor + 0.5f),
+        static_cast<std::uint8_t>(c.g * factor + 0.5f),
+        static_cast<std::uint8_t>(c.b * factor + 0.5f),
+        static_cast<std::uint8_t>(c.w * factor + 0.5f),
+    };
+}
+
 } // namespace lumos

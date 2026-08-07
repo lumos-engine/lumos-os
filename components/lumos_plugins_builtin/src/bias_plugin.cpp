@@ -6,7 +6,6 @@
 namespace lumos {
 namespace {
 
-// Bias white: mixes warm (~2700K-ish) and cool (~6500K-ish) RGB approximations.
 class BiasPlugin final : public IPlugin {
 public:
     Result<void> initialize(PluginContext& ctx) override {
@@ -60,13 +59,30 @@ private:
                  .type = ParamType::Int,
                  .default_value = "50",
                  .min_value = "0",
-                 .max_value = "100"},
+                 .max_value = "100",
+                 .description = "0 = warm, 100 = cool",
+                 .group = "look",
+                 .unit = "%",
+                 .step = "1"},
                 {.id = "intensity",
                  .name = "Intensity",
                  .type = ParamType::Int,
                  .default_value = "80",
                  .min_value = "0",
-                 .max_value = "100"},
+                 .max_value = "100",
+                 .description = "Overall bias brightness",
+                 .group = "look",
+                 .unit = "%",
+                 .step = "1"},
+            },
+        .capabilities =
+            {
+                .category = PluginCategory::Solid,
+                .realtime = false,
+                .needs_network = false,
+                .supports_audio = false,
+                .output = "rgb",
+                .tags = {"bias", "ambient", "tv"},
             },
     };
 };

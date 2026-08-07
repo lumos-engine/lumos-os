@@ -23,6 +23,14 @@ int main() {
     PowerLimiter generous({.max_ma = 5000, .ma_per_channel_at_full = 20});
     assert(generous.apply(dim) == 1.0f);
 
+    std::vector<Rgbw> rgbw(10, Rgbw{255, 255, 255, 255});
+    PowerLimiter rgbw_lim({.max_ma = 100, .ma_per_channel_at_full = 20});
+    const auto before_w = PowerLimiter::estimate_current_ma(std::span<const Rgbw>(rgbw), 20);
+    assert(before_w > 100);
+    const float scale_w = rgbw_lim.apply(rgbw);
+    assert(scale_w < 1.0f);
+    assert(PowerLimiter::estimate_current_ma(std::span<const Rgbw>(rgbw), 20) <= 100 + 5);
+
     std::puts("test_power_limiter OK");
     return 0;
 }

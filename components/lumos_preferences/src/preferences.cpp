@@ -38,6 +38,34 @@ std::string nvs_get_str_key(nvs_handle_t handle, const char* key, const std::str
 
 } // namespace
 
+void DeviceSettings::normalize_layout() {
+    if (led_count == 0) {
+        layout = {};
+        return;
+    }
+    if (layout.total() == led_count) {
+        return;
+    }
+    // Known presets.
+    if (led_count == 140) {
+        layout = {.top = 44, .right = 26, .bottom = 44, .left = 26};
+        return;
+    }
+    if (led_count == 340) {
+        layout = {.top = 144, .right = 26, .bottom = 144, .left = 26};
+        return;
+    }
+    // 16:9 perimeter ratio 16+9+16+9 = 50.
+    layout.top = static_cast<std::uint16_t>((led_count * 16 + 25) / 50);
+    layout.right = static_cast<std::uint16_t>((led_count * 9 + 25) / 50);
+    layout.bottom = static_cast<std::uint16_t>((led_count * 16 + 25) / 50);
+    const int left = static_cast<int>(led_count) - layout.top - layout.right - layout.bottom;
+    layout.left = static_cast<std::uint16_t>(left > 0 ? left : 0);
+    if (layout.total() != led_count && layout.left < led_count) {
+        layout.left = static_cast<std::uint16_t>(led_count - layout.top - layout.right - layout.bottom);
+    }
+}
+
 Result<void> Preferences::init() {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -98,6 +126,14 @@ Result<void> Preferences::load() {
     std::uint8_t order = static_cast<std::uint8_t>(device_.color_order);
     get_u8("color_order", order);
     device_.color_order = static_cast<ColorOrder>(order);
+    std::uint8_t white_algo = static_cast<std::uint8_t>(device_.white_algorithm);
+    get_u8("white_algo", white_algo);
+    device_.white_algorithm = static_cast<WhiteAlgorithm>(white_algo);
+    get_u16("lay_top", device_.layout.top);
+    get_u16("lay_right", device_.layout.right);
+    get_u16("lay_bottom", device_.layout.bottom);
+    get_u16("lay_left", device_.layout.left);
+    device_.normalize_layout();
     get_u8("brightness", device_.brightness);
     get_u16("power_ma", device_.power_limit_ma);
     get_u32("hh_timeout", device_.hyperhdr_timeout_ms);
@@ -147,10 +183,16 @@ Result<void> Preferences::save() {
         return Result<void>::fail(ErrorCode::IoError, "nvs_open failed");
     }
 
+    device_.normalize_layout();
     nvs_set_u16(handle, "led_count", device_.led_count);
     nvs_set_i32(handle, "gpio", device_.gpio);
     nvs_set_u8(handle, "chipset", static_cast<std::uint8_t>(device_.chipset));
     nvs_set_u8(handle, "color_order", static_cast<std::uint8_t>(device_.color_order));
+    nvs_set_u8(handle, "white_algo", static_cast<std::uint8_t>(device_.white_algorithm));
+    nvs_set_u16(handle, "lay_top", device_.layout.top);
+    nvs_set_u16(handle, "lay_right", device_.layout.right);
+    nvs_set_u16(handle, "lay_bottom", device_.layout.bottom);
+    nvs_set_u16(handle, "lay_left", device_.layout.left);
     nvs_set_u8(handle, "brightness", device_.brightness);
     nvs_set_u16(handle, "power_ma", device_.power_limit_ma);
     nvs_set_u32(handle, "hh_timeout", device_.hyperhdr_timeout_ms);

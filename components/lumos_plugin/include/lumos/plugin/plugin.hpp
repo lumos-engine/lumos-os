@@ -19,6 +19,13 @@ enum class ParamType : std::uint8_t {
     String,
 };
 
+enum class PluginCategory : std::uint8_t {
+    Effect = 0,
+    Solid,
+    Stream,
+    Utility,
+};
+
 struct ParamDescriptor {
     std::string id;
     std::string name;
@@ -27,6 +34,20 @@ struct ParamDescriptor {
     std::string min_value;
     std::string max_value;
     std::vector<std::string> enum_values;
+    std::string description;
+    std::string group;
+    std::string unit;
+    std::string step;
+    bool advanced{false};
+};
+
+struct PluginCapabilities {
+    PluginCategory category{PluginCategory::Effect};
+    bool realtime{false};
+    bool needs_network{false};
+    bool supports_audio{false};
+    std::string output{"rgb"}; // rgb | rgbw
+    std::vector<std::string> tags;
 };
 
 struct PluginDescriptor {
@@ -35,6 +56,7 @@ struct PluginDescriptor {
     std::string icon;
     bool is_default{false};
     std::vector<ParamDescriptor> parameters;
+    PluginCapabilities capabilities{};
 };
 
 struct PluginContext {

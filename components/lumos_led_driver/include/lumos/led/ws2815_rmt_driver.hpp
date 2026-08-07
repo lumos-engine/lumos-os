@@ -16,8 +16,10 @@ public:
 
     Result<void> init(const LedDriverConfig& config) override;
     Result<void> show(std::span<const Rgb> pixels) override;
+    Result<void> show_rgbw(std::span<const Rgbw> pixels) override;
     Result<void> clear() override;
     LedIndex led_count() const override { return config_.led_count; }
+    bool is_rgbw() const override { return config_.chipset == Chipset::Sk6812Rgbw; }
     void deinit() override;
 
 private:

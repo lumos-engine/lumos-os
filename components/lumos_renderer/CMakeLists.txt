@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "src/gamma.cpp"
+        "src/color_processor.cpp"
         "src/power_limiter.cpp"
         "src/renderer.cpp"
     INCLUDE_DIRS "include"

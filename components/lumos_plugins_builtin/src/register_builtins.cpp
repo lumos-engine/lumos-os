@@ -7,6 +7,9 @@ IPlugin* create_static_plugin();
 IPlugin* create_bias_plugin();
 IPlugin* create_rainbow_plugin();
 IPlugin* create_hyperhdr_plugin();
+IPlugin* create_aurora_plugin();
+IPlugin* create_fire_plugin();
+IPlugin* create_twinkle_plugin();
 
 void register_builtin_plugins(PluginManager& manager) {
     manager.register_plugin(create_off_plugin);
@@ -14,6 +17,9 @@ void register_builtin_plugins(PluginManager& manager) {
     manager.register_plugin(create_bias_plugin);
     manager.register_plugin(create_rainbow_plugin);
     manager.register_plugin(create_hyperhdr_plugin);
+    manager.register_plugin(create_aurora_plugin);
+    manager.register_plugin(create_fire_plugin);
+    manager.register_plugin(create_twinkle_plugin);
 }
 
 } // namespace lumos

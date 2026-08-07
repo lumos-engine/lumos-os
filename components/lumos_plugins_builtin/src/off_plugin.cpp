@@ -19,6 +19,15 @@ private:
         .icon = "power",
         .is_default = false,
         .parameters = {},
+        .capabilities =
+            {
+                .category = PluginCategory::Utility,
+                .realtime = false,
+                .needs_network = false,
+                .supports_audio = false,
+                .output = "rgb",
+                .tags = {"utility"},
+            },
     };
 };
 

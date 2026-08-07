@@ -16,12 +16,38 @@
 namespace lumos {
 namespace {
 
+const char* category_to_string(PluginCategory c) {
+    switch (c) {
+    case PluginCategory::Solid:
+        return "solid";
+    case PluginCategory::Stream:
+        return "stream";
+    case PluginCategory::Utility:
+        return "utility";
+    case PluginCategory::Effect:
+    default:
+        return "effect";
+    }
+}
+
 cJSON* descriptor_to_json(const PluginDescriptor& d) {
     cJSON* obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "id", d.id.c_str());
     cJSON_AddStringToObject(obj, "name", d.name.c_str());
     cJSON_AddStringToObject(obj, "icon", d.icon.c_str());
     cJSON_AddBoolToObject(obj, "default", d.is_default);
+
+    cJSON* caps = cJSON_AddObjectToObject(obj, "capabilities");
+    cJSON_AddStringToObject(caps, "category", category_to_string(d.capabilities.category));
+    cJSON_AddBoolToObject(caps, "realtime", d.capabilities.realtime);
+    cJSON_AddBoolToObject(caps, "needs_network", d.capabilities.needs_network);
+    cJSON_AddBoolToObject(caps, "supports_audio", d.capabilities.supports_audio);
+    cJSON_AddStringToObject(caps, "output", d.capabilities.output.c_str());
+    cJSON* tags = cJSON_AddArrayToObject(caps, "tags");
+    for (const auto& t : d.capabilities.tags) {
+        cJSON_AddItemToArray(tags, cJSON_CreateString(t.c_str()));
+    }
+
     cJSON* params = cJSON_AddArrayToObject(obj, "parameters");
     for (const auto& p : d.parameters) {
         cJSON* pj = cJSON_CreateObject();
@@ -63,6 +89,19 @@ cJSON* descriptor_to_json(const PluginDescriptor& d) {
                 cJSON_AddItemToArray(ev, cJSON_CreateString(v.c_str()));
             }
         }
+        if (!p.description.empty()) {
+            cJSON_AddStringToObject(pj, "description", p.description.c_str());
+        }
+        if (!p.group.empty()) {
+            cJSON_AddStringToObject(pj, "group", p.group.c_str());
+        }
+        if (!p.unit.empty()) {
+            cJSON_AddStringToObject(pj, "unit", p.unit.c_str());
+        }
+        if (!p.step.empty()) {
+            cJSON_AddStringToObject(pj, "step", p.step.c_str());
+        }
+        cJSON_AddBoolToObject(pj, "advanced", p.advanced);
         cJSON_AddItemToArray(params, pj);
     }
     return obj;
@@ -97,7 +136,7 @@ std::string RestApi::build_leds_json(const Framebuffer& fb) {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "leds");
     cJSON_AddNumberToObject(root, "count", count);
-    cJSON_AddStringToObject(root, "layout", "perimeter_16_9");
+    cJSON_AddStringToObject(root, "layout", "perimeter");
     cJSON_AddStringToObject(root, "order", "clockwise_top_left");
     cJSON_AddStringToObject(root, "rgb_hex", hex.c_str());
     char* printed = cJSON_PrintUnformatted(root);
@@ -140,6 +179,7 @@ esp_err_t RestApi::get_root(httpd_req_t* req) {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "name", kAppName.data());
     cJSON_AddStringToObject(root, "version", kAppVersion.data());
+    cJSON_AddStringToObject(root, "api", kApiVersion.data());
     cJSON* links = cJSON_AddObjectToObject(root, "links");
     cJSON_AddStringToObject(links, "plugins", "/api/v1/plugins");
     cJSON_AddStringToObject(links, "settings", "/api/v1/settings");
@@ -261,9 +301,17 @@ esp_err_t RestApi::get_settings(httpd_req_t* req) {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "led_count", d.led_count);
     cJSON_AddNumberToObject(root, "gpio", d.gpio);
+    cJSON_AddNumberToObject(root, "chipset", static_cast<int>(d.chipset));
+    cJSON_AddNumberToObject(root, "color_order", static_cast<int>(d.color_order));
+    cJSON_AddNumberToObject(root, "white_algorithm", static_cast<int>(d.white_algorithm));
     cJSON_AddNumberToObject(root, "brightness", d.brightness);
     cJSON_AddNumberToObject(root, "gamma", d.gamma);
     cJSON_AddNumberToObject(root, "power_limit_ma", d.power_limit_ma);
+    cJSON* layout = cJSON_AddObjectToObject(root, "layout");
+    cJSON_AddNumberToObject(layout, "top", d.layout.top);
+    cJSON_AddNumberToObject(layout, "right", d.layout.right);
+    cJSON_AddNumberToObject(layout, "bottom", d.layout.bottom);
+    cJSON_AddNumberToObject(layout, "left", d.layout.left);
     cJSON_AddNumberToObject(root, "startup_plugin", static_cast<int>(d.startup_plugin));
     cJSON_AddNumberToObject(root, "fallback_plugin", static_cast<int>(d.fallback_plugin));
     cJSON_AddNumberToObject(root, "hyperhdr_timeout_ms", d.hyperhdr_timeout_ms);
@@ -315,7 +363,48 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "gpio"); cJSON_IsNumber(v)) {
-        d.gpio = v->valueint;
+        if (v->valueint != d.gpio) {
+            d.gpio = v->valueint;
+            reboot_required = true;
+        }
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "chipset"); cJSON_IsNumber(v)) {
+        const auto next = static_cast<Chipset>(std::clamp(v->valueint, 0, 4));
+        if (next != d.chipset) {
+            d.chipset = next;
+            self->renderer_.set_chipset(next);
+            reboot_required = true;
+        }
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "color_order"); cJSON_IsNumber(v)) {
+        const auto next = static_cast<ColorOrder>(std::clamp(v->valueint, 0, 5));
+        if (next != d.color_order) {
+            d.color_order = next;
+            self->renderer_.set_color_order(next);
+            reboot_required = true;
+        }
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "white_algorithm"); cJSON_IsNumber(v)) {
+        d.white_algorithm = static_cast<WhiteAlgorithm>(std::clamp(v->valueint, 0, 0));
+        self->renderer_.set_white_algorithm(d.white_algorithm);
+    }
+    if (const cJSON* layout = cJSON_GetObjectItem(json, "layout"); cJSON_IsObject(layout)) {
+        if (const cJSON* v = cJSON_GetObjectItem(layout, "top"); cJSON_IsNumber(v)) {
+            d.layout.top = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(layout, "right"); cJSON_IsNumber(v)) {
+            d.layout.right = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(layout, "bottom"); cJSON_IsNumber(v)) {
+            d.layout.bottom = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(layout, "left"); cJSON_IsNumber(v)) {
+            d.layout.left = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (d.layout.total() != d.led_count) {
+            cJSON_Delete(json);
+            return send_json(req, "{\"error\":\"layout sides must sum to led_count\"}", 400);
+        }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "startup_plugin"); cJSON_IsNumber(v)) {
         d.startup_plugin = static_cast<StartupPluginMode>(v->valueint);

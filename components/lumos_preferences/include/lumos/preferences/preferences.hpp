@@ -11,6 +11,17 @@
 
 namespace lumos {
 
+struct LedLayout {
+    std::uint16_t top{44};
+    std::uint16_t right{26};
+    std::uint16_t bottom{44};
+    std::uint16_t left{26};
+
+    LedIndex total() const {
+        return static_cast<LedIndex>(top + right + bottom + left);
+    }
+};
+
 struct DeviceSettings {
     LedIndex led_count{kDefaultLedCount};
     int gpio{kDefaultLedGpio};
@@ -19,6 +30,8 @@ struct DeviceSettings {
     Brightness brightness{kDefaultBrightness};
     float gamma{kDefaultGamma};
     std::uint16_t power_limit_ma{kDefaultPowerLimitMa};
+    WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
+    LedLayout layout{};
     StartupPluginMode startup_plugin{StartupPluginMode::HyperHdr};
     FallbackPluginMode fallback_plugin{FallbackPluginMode::Bias};
     Milliseconds hyperhdr_timeout_ms{kDefaultHyperHdrTimeoutMs};
@@ -34,6 +47,9 @@ struct DeviceSettings {
     std::string wifi_netmask{"255.255.255.0"};
     std::string wifi_dns1;     // primary DNS; defaults to gateway if empty
     std::string wifi_dns2;     // secondary DNS; optional
+
+    // Ensure layout sides sum to led_count (16:9-ish distribution if mismatched).
+    void normalize_layout();
 };
 
 class Preferences {

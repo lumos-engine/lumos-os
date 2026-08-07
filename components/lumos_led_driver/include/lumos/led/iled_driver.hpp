@@ -22,8 +22,10 @@ public:
 
     virtual Result<void> init(const LedDriverConfig& config) = 0;
     virtual Result<void> show(std::span<const Rgb> pixels) = 0;
+    virtual Result<void> show_rgbw(std::span<const Rgbw> pixels) = 0;
     virtual Result<void> clear() = 0;
     virtual LedIndex led_count() const = 0;
+    virtual bool is_rgbw() const = 0;
     virtual void deinit() = 0;
 };
 

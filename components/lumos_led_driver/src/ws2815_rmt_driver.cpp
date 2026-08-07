@@ -69,6 +69,9 @@ Result<void> Ws2815RmtDriver::show(std::span<const Rgb> pixels) {
     if (strip_ == nullptr) {
         return Result<void>::fail(ErrorCode::NotInitialized, "LED driver not initialized");
     }
+    if (is_rgbw()) {
+        return Result<void>::fail(ErrorCode::InvalidArgument, "use show_rgbw for RGBW chipset");
+    }
     if (pixels.size() != config_.led_count) {
         return Result<void>::fail(ErrorCode::InvalidArgument, "pixel count mismatch");
     }
@@ -78,6 +81,32 @@ Result<void> Ws2815RmtDriver::show(std::span<const Rgb> pixels) {
         esp_err_t err = led_strip_set_pixel(strip_, i, p.r, p.g, p.b);
         if (err != ESP_OK) {
             return Result<void>::fail(ErrorCode::IoError, "led_strip_set_pixel failed");
+        }
+    }
+
+    esp_err_t err = led_strip_refresh(strip_);
+    if (err != ESP_OK) {
+        return Result<void>::fail(ErrorCode::IoError, "led_strip_refresh failed");
+    }
+    return Result<void>::ok();
+}
+
+Result<void> Ws2815RmtDriver::show_rgbw(std::span<const Rgbw> pixels) {
+    if (strip_ == nullptr) {
+        return Result<void>::fail(ErrorCode::NotInitialized, "LED driver not initialized");
+    }
+    if (!is_rgbw()) {
+        return Result<void>::fail(ErrorCode::InvalidArgument, "chipset is not RGBW");
+    }
+    if (pixels.size() != config_.led_count) {
+        return Result<void>::fail(ErrorCode::InvalidArgument, "pixel count mismatch");
+    }
+
+    for (LedIndex i = 0; i < config_.led_count; ++i) {
+        const auto& p = pixels[i];
+        esp_err_t err = led_strip_set_pixel_rgbw(strip_, i, p.r, p.g, p.b, p.w);
+        if (err != ESP_OK) {
+            return Result<void>::fail(ErrorCode::IoError, "led_strip_set_pixel_rgbw failed");
         }
     }
 

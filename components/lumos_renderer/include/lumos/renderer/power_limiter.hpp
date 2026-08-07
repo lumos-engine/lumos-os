@@ -4,7 +4,6 @@
 #include "lumos/core/types.hpp"
 
 #include <span>
-#include <vector>
 
 namespace lumos {
 
@@ -24,8 +23,11 @@ public:
 
     // Returns scale factor applied (1.0 = no limiting).
     float apply(std::span<Rgb> pixels) const;
+    float apply(std::span<Rgbw> pixels) const;
 
     static std::uint32_t estimate_current_ma(std::span<const Rgb> pixels,
+                                             std::uint16_t ma_per_channel_at_full);
+    static std::uint32_t estimate_current_ma(std::span<const Rgbw> pixels,
                                              std::uint16_t ma_per_channel_at_full);
 
 private:
