@@ -31,6 +31,7 @@ private:
     static esp_err_t get_wifi_scan(httpd_req_t* req);
     static esp_err_t post_wifi(httpd_req_t* req);
     static esp_err_t get_wled_json(httpd_req_t* req);
+    static esp_err_t put_wled_state(httpd_req_t* req);
 
     static RestApi* from_req(httpd_req_t* req);
     static esp_err_t send_json(httpd_req_t* req, const char* json, int status = 200);
@@ -43,6 +44,8 @@ private:
     WifiService& wifi_;
     const Framebuffer& framebuffer_;
     httpd_handle_t server_{nullptr};
+    bool wled_on_{true};
+    bool wled_live_{false};
 };
 
 } // namespace lumos

@@ -3,6 +3,10 @@
 
 #include <cJSON.h>
 #include "esp_system.h"
+#include "esp_timer.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <algorithm>
 #include <cstring>
@@ -290,6 +294,7 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         return send_json(req, "{\"error\":\"invalid json\"}", 400);
     }
     auto& d = self->preferences_.device();
+    bool reboot_required = false;
     if (const cJSON* v = cJSON_GetObjectItem(json, "brightness"); cJSON_IsNumber(v)) {
         d.brightness = static_cast<Brightness>(std::clamp(v->valueint, 0, 255));
         self->renderer_.set_brightness(d.brightness);
@@ -303,7 +308,11 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         self->renderer_.set_power_limit_ma(d.power_limit_ma);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "led_count"); cJSON_IsNumber(v)) {
-        d.led_count = static_cast<LedIndex>(v->valueint);
+        const auto next = static_cast<LedIndex>(std::clamp(v->valueint, 1, 2000));
+        if (next != d.led_count) {
+            d.led_count = next;
+            reboot_required = true;
+        }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "gpio"); cJSON_IsNumber(v)) {
         d.gpio = v->valueint;
@@ -340,6 +349,13 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     }
     self->preferences_.save();
     cJSON_Delete(json);
+    if (reboot_required) {
+        // Framebuffer/driver size is fixed at boot.
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+        vTaskDelay(pdMS_TO_TICKS(250));
+        esp_restart();
+    }
     return send_json(req, "{\"ok\":true}");
 }
 
@@ -377,21 +393,81 @@ esp_err_t RestApi::get_leds(httpd_req_t* req) {
     return send_json(req, json.c_str());
 }
 
-esp_err_t RestApi::get_wled_json(httpd_req_t* req) {
-    // Minimal WLED-compatible /json for HyperHDR Hyperk probing.
-    auto* self = from_req(req);
-    const auto& d = self->preferences_.device();
+namespace {
+
+cJSON* build_wled_root(Preferences& preferences, PluginManager& plugins, WifiService& wifi,
+                       bool wled_on, bool wled_live) {
+    // HyperHDR Hyperk reads /json then PUTs /json/state before streaming DDP.
+    const auto& d = preferences.device();
+    const auto st = wifi.status();
     cJSON* root = cJSON_CreateObject();
     cJSON* state = cJSON_AddObjectToObject(root, "state");
-    cJSON_AddBoolToObject(state, "on", self->plugins_.active_id() != "off");
+    cJSON_AddBoolToObject(state, "on", wled_on && plugins.active_id() != "off");
+    cJSON_AddBoolToObject(state, "live", wled_live);
     cJSON_AddNumberToObject(state, "bri", d.brightness);
+
     cJSON* info = cJSON_AddObjectToObject(root, "info");
     cJSON_AddStringToObject(info, "ver", kAppVersion.data());
+    cJSON_AddStringToObject(info, "cn", kAppVersion.data());
     cJSON_AddStringToObject(info, "name", "LumosOS");
     cJSON_AddStringToObject(info, "brand", "LumosOS");
+    cJSON_AddStringToObject(info, "product", "LumosOS");
+    cJSON_AddStringToObject(info, "arch", "esp32");
+    cJSON_AddNumberToObject(info, "uptime",
+                            static_cast<double>(esp_timer_get_time() / 1000000ULL));
     cJSON* leds = cJSON_AddObjectToObject(info, "leds");
     cJSON_AddNumberToObject(leds, "count", d.led_count);
+    cJSON_AddNumberToObject(leds, "maxpwr", 0);
+    cJSON* wifi_obj = cJSON_AddObjectToObject(info, "wifi");
+    const int signal = st.rssi == 0 ? 90 : std::clamp(2 * (st.rssi + 100), 0, 100);
+    cJSON_AddNumberToObject(wifi_obj, "signal", signal);
+    cJSON_AddNumberToObject(wifi_obj, "channel", 0);
+    cJSON_AddStringToObject(wifi_obj, "bssid", "");
+    return root;
+}
+
+} // namespace
+
+esp_err_t RestApi::get_wled_json(httpd_req_t* req) {
+    auto* self = from_req(req);
+    cJSON* root =
+        build_wled_root(self->preferences_, self->plugins_, self->wifi_, self->wled_on_, self->wled_live_);
     char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
+}
+
+esp_err_t RestApi::put_wled_state(httpd_req_t* req) {
+    // Accept Hyperk powerOn/powerOff: PUT /json/state {"on":true,"live":true,"bri":255}
+    auto* self = from_req(req);
+    std::string body;
+    if (read_body(req, body) != ESP_OK) {
+        return send_json(req, "{\"error\":true}", 400);
+    }
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (json == nullptr) {
+        return send_json(req, "{\"error\":true}", 400);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "on"); cJSON_IsBool(v)) {
+        self->wled_on_ = cJSON_IsTrue(v);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "live"); cJSON_IsBool(v)) {
+        self->wled_live_ = cJSON_IsTrue(v);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "bri"); cJSON_IsNumber(v)) {
+        auto& d = self->preferences_.device();
+        d.brightness = static_cast<Brightness>(std::clamp(v->valueint, 0, 255));
+        self->renderer_.set_brightness(d.brightness);
+        self->preferences_.save();
+    }
+    cJSON_Delete(json);
+
+    cJSON* root =
+        build_wled_root(self->preferences_, self->plugins_, self->wifi_, self->wled_on_, self->wled_live_);
+    cJSON* state = cJSON_GetObjectItem(root, "state");
+    char* printed = cJSON_PrintUnformatted(state != nullptr ? state : root);
     cJSON_Delete(root);
     esp_err_t err = send_json(req, printed);
     cJSON_free(printed);
@@ -486,6 +562,9 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
         {.uri = "/json", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
+        {.uri = "/json/state", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
+        {.uri = "/json/state", .method = HTTP_PUT, .handler = put_wled_state, .user_ctx = this},
+        {.uri = "/json/state", .method = HTTP_POST, .handler = put_wled_state, .user_ctx = this},
     };
 
     for (const auto& route : routes) {

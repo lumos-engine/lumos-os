@@ -28,7 +28,8 @@ enum class ColorOrder : std::uint8_t {
     Bgr,
 };
 
-inline constexpr LedIndex kDefaultLedCount = 150;
+// Default matches a common 16:9 perimeter: top/bottom 44, left/right 26.
+inline constexpr LedIndex kDefaultLedCount = 140;
 inline constexpr int kDefaultLedGpio = 16;
 inline constexpr Brightness kDefaultBrightness = 128;
 inline constexpr float kDefaultGamma = 2.2f;

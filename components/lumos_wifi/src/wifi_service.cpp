@@ -8,6 +8,7 @@
 #include "mdns.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <set>
@@ -361,10 +362,12 @@ Result<void> WifiService::start_mdns() {
     mdns_service_add("LumosOS", "_http", "_tcp", 80, nullptr, 0);
     mdns_service_add("LumosOS", "_lumosos", "_tcp", 80, nullptr, 0);
 
+    std::snprintf(mdns_leds_txt_, sizeof(mdns_leds_txt_), "%u",
+                  static_cast<unsigned>(preferences_.device().led_count));
     mdns_txt_item_t txt[] = {
         {"path", "/"},
         {"version", kAppVersion.data()},
-        {"leds", "150"},
+        {"leds", mdns_leds_txt_},
         {"proto", "ddp"},
     };
     mdns_service_add("LumosOS", "_hyperk", "_tcp", 80, txt, 4);

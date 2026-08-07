@@ -22,7 +22,7 @@ Result<void> DdpTransport::start(LedIndex led_count, FrameCallback on_frame) {
     on_frame_ = std::move(on_frame);
     parser_.set_led_count(led_count_);
     assembly_.assign(led_count_, Rgb::black());
-    recv_buf_.assign(2048, 0);
+    recv_buf_.assign(1600, 0);
 
     sock_ = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock_ < 0) {
@@ -31,6 +31,8 @@ Result<void> DdpTransport::start(LedIndex led_count, FrameCallback on_frame) {
 
     int yes = 1;
     setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    int rcv = 16 * 1024;
+    setsockopt(sock_, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -71,12 +73,18 @@ void DdpTransport::poll() {
             break;
         }
 
+        ++packets_;
         std::span<const std::uint8_t> packet(recv_buf_.data(), static_cast<std::size_t>(n));
         const auto header = parser_.parse_header(packet);
         if (!header.valid) {
             continue;
         }
         if (parser_.apply_payload(header, packet, assembly_)) {
+            ++frames_;
+            if (frames_ == 1 || (frames_ % 300) == 0) {
+                log.info("DDP frame #%u (pkts=%u, leds=%u)", static_cast<unsigned>(frames_),
+                         static_cast<unsigned>(packets_), static_cast<unsigned>(led_count_));
+            }
             LedFrame frame;
             frame.pixels = assembly_;
             frame.timestamp_ms = 0;

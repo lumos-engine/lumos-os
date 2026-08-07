@@ -72,6 +72,7 @@ private:
     bool started_{false};
     std::atomic<bool> captive_dns_running_{false};
     std::atomic<bool> want_sta_connect_{false};
+    char mdns_leds_txt_[8]{"150"};
 };
 
 } // namespace lumos

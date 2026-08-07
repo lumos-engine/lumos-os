@@ -37,7 +37,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <section>
 <h2>Live preview</h2>
 <div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
-<p class="hint">16:9 ambilight view of the framebuffer (clockwise from top-left). Matches what the strip would show if powered.</p>
+<p class="hint">16:9 view of what LumosOS received (clockwise from top-left: top→right→bottom→left). Layout for 140 LEDs is 44/26/44/26. If only one edge lights, HyperHDR LED count/layout doesn’t match.</p>
 </section>
 <section>
 <h2>Status</h2>
@@ -71,6 +71,8 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <h2>Lighting</h2>
 <label>Plugin</label><select id="plugin"></select>
 <label>Brightness (0–255)</label><input id="brightness" type="number" min="0" max="255"/>
+<label>LED count</label><input id="ledCount" type="number" min="1" max="2000" placeholder="e.g. 140 for 44+26+44+26"/>
+<p class="hint">Must match HyperHDR exactly (e.g. 44×2 + 26×2 = 140). Changing count reboots the device.</p>
 <button onclick="applyLighting()">Apply</button>
 </section>
 <section>
@@ -105,7 +107,10 @@ function hexToBytes(hex){
   return out;
 }
 function sideCounts(n){
-  // Distribute around 16:9 perimeter (W:H = 16:9 → sides 16,9,16,9).
+  // Common HyperHDR 16:9 TV layout: top/bottom 44, left/right 26.
+  if(n===140) return {top:44,right:26,bottom:44,left:26};
+  if(n===340) return {top:144,right:26,bottom:144,left:26};
+  // Fallback: distribute by 16:9 perimeter ratio (16+9+16+9=50).
   const top=Math.round(n*16/50);
   const right=Math.round(n*9/50);
   const bottom=Math.round(n*16/50);
@@ -132,10 +137,19 @@ function drawPreview(){
   ctx.fillStyle='#8b95a8';
   ctx.font='14px system-ui,sans-serif';
   ctx.textAlign='center';
-  ctx.fillText(ledCount? (ledCount+' LEDs · 16:9'):'Waiting for frames…', W/2, H/2);
+  const sides=ledCount?sideCounts(ledCount):null;
+  let lit=0;
+  if(ledRgb && ledCount){
+    for(let i=0;i<ledCount;i++){
+      const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++;
+    }
+  }
+  const label=ledCount
+    ? (lit+' lit / '+ledCount+(sides?(' · '+sides.top+'/'+sides.right+'/'+sides.bottom+'/'+sides.left):''))
+    : 'Waiting for frames…';
+  ctx.fillText(label, W/2, H/2);
 
   if(!ledRgb || !ledCount) return;
-  const sides=sideCounts(ledCount);
   const band=12;
   let idx=0;
   // Top: left → right
@@ -196,6 +210,8 @@ async function loadSettings(){
     netmask.value=s.wifi_netmask||'255.255.255.0';
     dns1.value=s.wifi_dns1||'';
     dns2.value=s.wifi_dns2||'';
+    if(typeof s.led_count==='number') ledCount.value=s.led_count;
+    if(typeof s.brightness==='number') brightness.value=s.brightness;
     toggleStatic();
   }catch{}
 }
@@ -272,6 +288,18 @@ async function applyLighting(){
   await j('/api/v1/brightness',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({brightness:Number(brightness.value)})});
   await j('/api/v1/plugin/'+plugin.value,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const n=Number(ledCount.value);
+  if(n>0){
+    try{
+      const r=await fetch('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({led_count:n})});
+      const t=await r.text();
+      if(t.indexOf('"reboot":true')>=0){
+        alert('LED count saved — device rebooting… refresh this page in a few seconds');
+        return;
+      }
+    }catch{}
+  }
   refresh();
 }
 async function uploadOta(){

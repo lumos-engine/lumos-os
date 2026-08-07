@@ -22,6 +22,8 @@ private:
     DdpParser parser_{0};
     std::vector<Rgb> assembly_;
     std::vector<std::uint8_t> recv_buf_;
+    std::uint32_t packets_{0};
+    std::uint32_t frames_{0};
 };
 
 } // namespace lumos
