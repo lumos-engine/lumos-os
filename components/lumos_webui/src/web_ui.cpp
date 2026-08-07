@@ -27,11 +27,18 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 .check input{width:auto}
 #staticFields{display:none}
 #staticFields.show{display:block}
+.preview-wrap{position:relative;width:100%;aspect-ratio:16/9;background:#07090d;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.preview-wrap canvas{display:block;width:100%;height:100%}
 </style>
 </head>
 <body>
 <header><h1>LumosOS</h1><p>Recovery &amp; local configuration</p></header>
 <main>
+<section>
+<h2>Live preview</h2>
+<div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
+<p class="hint">16:9 ambilight view of the framebuffer (clockwise from top-left). Matches what the strip would show if powered.</p>
+</section>
 <section>
 <h2>Status</h2>
 <pre id="status">Loading…</pre>
@@ -75,6 +82,8 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </main>
 <script>
 let wsLive=false;
+let ledRgb=null;
+let ledCount=0;
 async function j(url,opts){const r=await fetch(url,opts); if(!r.ok) throw new Error(await r.text()); return r.json()}
 function toggleStatic(){
   document.getElementById('staticFields').classList.toggle('show', useStatic.checked);
@@ -89,6 +98,93 @@ function renderStatus(s){
   if((!netmask.value || netmask.value==='255.255.255.0') && s.wifi && s.wifi.netmask) netmask.value=s.wifi.netmask;
   if(!dns1.value && s.wifi && s.wifi.dns1) dns1.value=s.wifi.dns1;
   if(!dns2.value && s.wifi && s.wifi.dns2) dns2.value=s.wifi.dns2;
+}
+function hexToBytes(hex){
+  const out=new Uint8Array(hex.length/2);
+  for(let i=0;i<out.length;i++) out[i]=parseInt(hex.substr(i*2,2),16);
+  return out;
+}
+function sideCounts(n){
+  // Distribute around 16:9 perimeter (W:H = 16:9 → sides 16,9,16,9).
+  const top=Math.round(n*16/50);
+  const right=Math.round(n*9/50);
+  const bottom=Math.round(n*16/50);
+  let left=n-top-right-bottom;
+  if(left<0){left=0;}
+  return {top,right,bottom,left};
+}
+function drawPreview(){
+  const canvas=document.getElementById('ledPreview');
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#07090d';
+  ctx.fillRect(0,0,W,H);
+
+  const pad=18;
+  const screenX=pad+14, screenY=pad+14;
+  const screenW=W-2*(pad+14), screenH=H-2*(pad+14);
+  ctx.fillStyle='#121722';
+  ctx.strokeStyle='#2a3340';
+  ctx.lineWidth=2;
+  roundRect(ctx,screenX,screenY,screenW,screenH,8);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#8b95a8';
+  ctx.font='14px system-ui,sans-serif';
+  ctx.textAlign='center';
+  ctx.fillText(ledCount? (ledCount+' LEDs · 16:9'):'Waiting for frames…', W/2, H/2);
+
+  if(!ledRgb || !ledCount) return;
+  const sides=sideCounts(ledCount);
+  const band=12;
+  let idx=0;
+  // Top: left → right
+  for(let i=0;i<sides.top && idx<ledCount;i++,idx++){
+    const t=sides.top<=1?0.5:i/(sides.top-1);
+    const x=pad + t*(W-2*pad);
+    drawLed(ctx,x,pad,band,ledRgb,idx);
+  }
+  // Right: top → bottom
+  for(let i=0;i<sides.right && idx<ledCount;i++,idx++){
+    const t=sides.right<=1?0.5:i/(sides.right-1);
+    const y=pad + t*(H-2*pad);
+    drawLed(ctx,W-pad,y,band,ledRgb,idx);
+  }
+  // Bottom: right → left
+  for(let i=0;i<sides.bottom && idx<ledCount;i++,idx++){
+    const t=sides.bottom<=1?0.5:i/(sides.bottom-1);
+    const x=W-pad - t*(W-2*pad);
+    drawLed(ctx,x,H-pad,band,ledRgb,idx);
+  }
+  // Left: bottom → top
+  for(let i=0;i<sides.left && idx<ledCount;i++,idx++){
+    const t=sides.left<=1?0.5:i/(sides.left-1);
+    const y=H-pad - t*(H-2*pad);
+    drawLed(ctx,pad,y,band,ledRgb,idx);
+  }
+}
+function drawLed(ctx,x,y,size,rgb,idx){
+  let r=rgb[idx*3], g=rgb[idx*3+1], b=rgb[idx*3+2];
+  const lit=r|g|b;
+  if(!lit){ r=28; g=34; b=44; } // dim placeholder so layout is visible when off
+  ctx.beginPath();
+  ctx.fillStyle='rgb('+r+','+g+','+b+')';
+  if(lit){
+    ctx.shadowColor='rgba('+r+','+g+','+b+',0.55)';
+    ctx.shadowBlur=10;
+  }
+  ctx.arc(x,y,size/2,0,Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur=0;
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
 }
 async function loadSettings(){
   try{
@@ -116,11 +212,15 @@ async function refreshPlugins(){
   }
 }
 async function refresh(){
-  if(!wsLive){
-    const s=await j('/api/v1/status');
-    renderStatus(s);
+  try{
+    if(!wsLive){
+      const s=await j('/api/v1/status');
+      renderStatus(s);
+    }
+    await refreshPlugins();
+  }catch(e){
+    document.getElementById('status').textContent='Status unavailable: '+e.message;
   }
-  await refreshPlugins();
 }
 async function scanWifi(){
   const sel=document.getElementById('netlist');
@@ -180,13 +280,30 @@ async function uploadOta(){
   const r=await fetch('/api/v1/ota',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
   ota.textContent=await r.text();
 }
-loadSettings(); refresh(); scanWifi(); setInterval(refresh,5000);
+async function pollLeds(){
+  try{
+    const m=await j('/api/v1/leds');
+    if(m && m.rgb_hex){
+      ledCount=m.count||0;
+      ledRgb=hexToBytes(m.rgb_hex);
+      drawPreview();
+    }
+  }catch(e){
+    // keep last frame
+  }
+}
+function onWsMessage(m){
+  if(m.type==='state') renderStatus(m);
+}
+loadSettings(); refresh(); scanWifi(); drawPreview();
+pollLeds(); setInterval(pollLeds, 150);
+setInterval(refresh,5000);
 try{
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
   ws.onopen=()=>{wsLive=true};
   ws.onclose=()=>{wsLive=false};
   ws.onerror=()=>{wsLive=false};
-  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='state') renderStatus(m);}catch{}};
+  ws.onmessage=e=>{try{onWsMessage(JSON.parse(e.data));}catch{}};
 }catch{}
 </script>
 </body>

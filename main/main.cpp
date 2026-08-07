@@ -26,7 +26,7 @@ lumos::Logger log{"main"};
 httpd_handle_t start_http_server() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 24;
+    config.max_uri_handlers = 32;
     config.stack_size = 8192;
     config.lru_purge_enable = true;
 
@@ -102,8 +102,10 @@ extern "C" void app_main() {
     }
 
     auto webui = std::make_unique<lumos::WebUi>();
-    auto rest = std::make_unique<lumos::RestApi>(*preferences, *plugins, *renderer, *wifi);
-    auto ws = std::make_unique<lumos::WsApi>(*preferences, *plugins, *renderer, *wifi);
+    auto rest =
+        std::make_unique<lumos::RestApi>(*preferences, *plugins, *renderer, *wifi, *framebuffer);
+    auto ws =
+        std::make_unique<lumos::WsApi>(*preferences, *plugins, *renderer, *wifi, *framebuffer);
     auto ota = std::make_unique<lumos::OtaService>();
 
     webui->start(server);

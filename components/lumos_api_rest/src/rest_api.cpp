@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace lumos {
 namespace {
@@ -66,8 +67,41 @@ cJSON* descriptor_to_json(const PluginDescriptor& d) {
 } // namespace
 
 RestApi::RestApi(Preferences& preferences, PluginManager& plugins, Renderer& renderer,
-                 WifiService& wifi)
-    : preferences_(preferences), plugins_(plugins), renderer_(renderer), wifi_(wifi) {}
+                 WifiService& wifi, const Framebuffer& framebuffer)
+    : preferences_(preferences),
+      plugins_(plugins),
+      renderer_(renderer),
+      wifi_(wifi),
+      framebuffer_(framebuffer) {}
+
+std::string RestApi::build_leds_json(const Framebuffer& fb) {
+    const LedIndex count = fb.size();
+    std::string hex;
+    hex.resize(static_cast<std::size_t>(count) * 6);
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (LedIndex i = 0; i < count; ++i) {
+        const auto& c = fb[i];
+        const std::size_t o = static_cast<std::size_t>(i) * 6;
+        hex[o + 0] = kHex[c.r >> 4];
+        hex[o + 1] = kHex[c.r & 0x0F];
+        hex[o + 2] = kHex[c.g >> 4];
+        hex[o + 3] = kHex[c.g & 0x0F];
+        hex[o + 4] = kHex[c.b >> 4];
+        hex[o + 5] = kHex[c.b & 0x0F];
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "leds");
+    cJSON_AddNumberToObject(root, "count", count);
+    cJSON_AddStringToObject(root, "layout", "perimeter_16_9");
+    cJSON_AddStringToObject(root, "order", "clockwise_top_left");
+    cJSON_AddStringToObject(root, "rgb_hex", hex.c_str());
+    char* printed = cJSON_PrintUnformatted(root);
+    std::string out = printed ? printed : "{}";
+    cJSON_free(printed);
+    cJSON_Delete(root);
+    return out;
+}
 
 RestApi* RestApi::from_req(httpd_req_t* req) {
     return static_cast<RestApi*>(req->user_ctx);
@@ -337,6 +371,33 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     return err;
 }
 
+esp_err_t RestApi::get_leds(httpd_req_t* req) {
+    auto* self = from_req(req);
+    const auto json = build_leds_json(self->framebuffer_);
+    return send_json(req, json.c_str());
+}
+
+esp_err_t RestApi::get_wled_json(httpd_req_t* req) {
+    // Minimal WLED-compatible /json for HyperHDR Hyperk probing.
+    auto* self = from_req(req);
+    const auto& d = self->preferences_.device();
+    cJSON* root = cJSON_CreateObject();
+    cJSON* state = cJSON_AddObjectToObject(root, "state");
+    cJSON_AddBoolToObject(state, "on", self->plugins_.active_id() != "off");
+    cJSON_AddNumberToObject(state, "bri", d.brightness);
+    cJSON* info = cJSON_AddObjectToObject(root, "info");
+    cJSON_AddStringToObject(info, "ver", kAppVersion.data());
+    cJSON_AddStringToObject(info, "name", "LumosOS");
+    cJSON_AddStringToObject(info, "brand", "LumosOS");
+    cJSON* leds = cJSON_AddObjectToObject(info, "leds");
+    cJSON_AddNumberToObject(leds, "count", d.led_count);
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
+}
+
 esp_err_t RestApi::get_wifi_scan(httpd_req_t* req) {
     auto* self = from_req(req);
     auto result = self->wifi_.scan();
@@ -421,8 +482,10 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/settings", .method = HTTP_GET, .handler = get_settings, .user_ctx = this},
         {.uri = "/api/v1/settings", .method = HTTP_POST, .handler = post_settings, .user_ctx = this},
         {.uri = "/api/v1/status", .method = HTTP_GET, .handler = get_status, .user_ctx = this},
+        {.uri = "/api/v1/leds", .method = HTTP_GET, .handler = get_leds, .user_ctx = this},
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
+        {.uri = "/json", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
     };
 
     for (const auto& route : routes) {

@@ -27,6 +27,7 @@ public:
     IPlugin* active() const { return active_; }
     const std::string& active_id() const { return active_id_; }
     bool in_fallback() const { return in_fallback_; }
+    const Framebuffer& framebuffer() const { return framebuffer_; }
 
     std::vector<const PluginDescriptor*> list_descriptors() const;
     IPlugin* find(const std::string& plugin_id) const;

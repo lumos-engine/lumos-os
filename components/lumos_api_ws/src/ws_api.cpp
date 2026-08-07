@@ -6,7 +6,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <algorithm>
 #include <cstring>
 
 namespace lumos {
@@ -14,11 +13,17 @@ namespace {
 Logger log{"ws"};
 }
 
-WsApi::WsApi(Preferences& preferences, PluginManager& plugins, Renderer& renderer, WifiService& wifi)
-    : preferences_(preferences), plugins_(plugins), renderer_(renderer), wifi_(wifi) {}
+WsApi::WsApi(Preferences& preferences, PluginManager& plugins, Renderer& renderer, WifiService& wifi,
+             const Framebuffer& framebuffer)
+    : preferences_(preferences),
+      plugins_(plugins),
+      renderer_(renderer),
+      wifi_(wifi),
+      framebuffer_(framebuffer) {
+    (void)framebuffer_;
+}
 
 std::string WsApi::build_state_json() const {
-    // Keep the same shape as GET /api/v1/status so the UI never flickers between schemas.
     const auto wifi = wifi_.status();
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "state");
@@ -76,7 +81,6 @@ esp_err_t WsApi::ws_handler(httpd_req_t* req) {
     }
     buf[frame.len] = 0;
 
-    // Clients can send {"type":"ping"} or {"type":"subscribe"}
     if (std::strstr(reinterpret_cast<char*>(buf.data()), "ping") != nullptr) {
         const char* pong = "{\"type\":\"pong\"}";
         httpd_ws_frame_t out{};
@@ -86,11 +90,11 @@ esp_err_t WsApi::ws_handler(httpd_req_t* req) {
         return httpd_ws_send_frame(req, &out);
     }
 
-    const auto state = self->build_state_json();
+    self->outbound_ = self->build_state_json();
     httpd_ws_frame_t out{};
     out.type = HTTPD_WS_TYPE_TEXT;
-    out.payload = reinterpret_cast<std::uint8_t*>(const_cast<char*>(state.data()));
-    out.len = state.size();
+    out.payload = reinterpret_cast<std::uint8_t*>(self->outbound_.data());
+    out.len = self->outbound_.size();
     return httpd_ws_send_frame(req, &out);
 }
 
@@ -98,13 +102,17 @@ void WsApi::broadcast_state() {
     if (server_ == nullptr) {
         return;
     }
-    const auto state = build_state_json();
     std::lock_guard<std::mutex> lock(clients_mu_);
+    if (client_fds_.empty()) {
+        return;
+    }
+    // Keep payload alive for async sends.
+    outbound_ = build_state_json();
     for (auto it = client_fds_.begin(); it != client_fds_.end();) {
         httpd_ws_frame_t frame{};
         frame.type = HTTPD_WS_TYPE_TEXT;
-        frame.payload = reinterpret_cast<std::uint8_t*>(const_cast<char*>(state.data()));
-        frame.len = state.size();
+        frame.payload = reinterpret_cast<std::uint8_t*>(outbound_.data());
+        frame.len = outbound_.size();
         esp_err_t err = httpd_ws_send_frame_async(server_, *it, &frame);
         if (err != ESP_OK) {
             it = client_fds_.erase(it);
