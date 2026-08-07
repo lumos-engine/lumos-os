@@ -7,24 +7,26 @@
 #include "esp_wifi.h"
 #include "mdns.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
+#include <set>
 
 namespace lumos {
 namespace {
 
 Logger log{"wifi"};
 std::unique_ptr<CaptiveDns> g_captive_dns;
-WifiService* g_instance = nullptr;
 
 void event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
     auto* self = static_cast<WifiService*>(arg);
     if (base == WIFI_EVENT) {
         if (id == WIFI_EVENT_STA_START) {
-            esp_wifi_connect();
+            self->on_sta_start();
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
-            log.warn("STA disconnected — retrying / falling back to AP");
-            esp_wifi_connect();
+            log.warn("STA disconnected");
+            // Reconnect only when we intentionally joined a network.
+            self->on_sta_start();
         } else if (id == WIFI_EVENT_AP_START) {
             log.info("SoftAP started");
         }
@@ -35,15 +37,10 @@ void event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
 
 } // namespace
 
-WifiService::WifiService(Preferences& preferences) : preferences_(preferences) {
-    g_instance = this;
-}
+WifiService::WifiService(Preferences& preferences) : preferences_(preferences) {}
 
 WifiService::~WifiService() {
     stop();
-    if (g_instance == this) {
-        g_instance = nullptr;
-    }
 }
 
 void WifiService::ensure_netif() {
@@ -58,6 +55,12 @@ void WifiService::ensure_netif() {
     }
     if (ap_netif_ == nullptr) {
         ap_netif_ = esp_netif_create_default_wifi_ap();
+    }
+}
+
+void WifiService::on_sta_start() {
+    if (want_sta_connect_) {
+        esp_wifi_connect();
     }
 }
 
@@ -98,11 +101,14 @@ Result<void> WifiService::connect_sta(const std::string& ssid, const std::string
                  sizeof(wifi_config.sta.ssid) - 1);
     std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), password.c_str(),
                  sizeof(wifi_config.sta.password) - 1);
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.threshold.authmode =
+        password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
 
+    want_sta_connect_ = true;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_connect();
 
     status_.mode = WifiMode::Station;
     status_.ssid = ssid;
@@ -117,6 +123,7 @@ Result<void> WifiService::connect_sta(const std::string& ssid, const std::string
 
 Result<void> WifiService::start_ap(const std::string& ssid) {
     ensure_netif();
+    want_sta_connect_ = false;
 
     wifi_config_t wifi_config{};
     std::strncpy(reinterpret_cast<char*>(wifi_config.ap.ssid), ssid.c_str(),
@@ -126,7 +133,8 @@ Result<void> WifiService::start_ap(const std::string& ssid) {
     wifi_config.ap.max_connection = 4;
     wifi_config.ap.authmode = WIFI_AUTH_OPEN;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    // APSTA so we can scan nearby networks while the captive portal is up.
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
@@ -149,6 +157,67 @@ Result<void> WifiService::start_ap(const std::string& ssid) {
         status_cb_(status_);
     }
     return Result<void>::ok();
+}
+
+Result<std::vector<WifiNetwork>> WifiService::scan() {
+    // Ensure STA interface exists for scanning (APSTA or STA).
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&mode);
+    if (mode == WIFI_MODE_AP) {
+        esp_wifi_set_mode(WIFI_MODE_APSTA);
+    } else if (mode == WIFI_MODE_NULL) {
+        return Result<std::vector<WifiNetwork>>::fail(ErrorCode::NotInitialized, "wifi not started");
+    }
+
+    wifi_scan_config_t scan_config{};
+    scan_config.show_hidden = false;
+    scan_config.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+
+    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    if (err != ESP_OK) {
+        return Result<std::vector<WifiNetwork>>::fail(ErrorCode::NetworkError, "wifi scan failed");
+    }
+
+    std::uint16_t ap_count = 0;
+    esp_wifi_scan_get_ap_num(&ap_count);
+    if (ap_count == 0) {
+        return Result<std::vector<WifiNetwork>>::ok({});
+    }
+    if (ap_count > 40) {
+        ap_count = 40;
+    }
+
+    std::vector<wifi_ap_record_t> records(ap_count);
+    err = esp_wifi_scan_get_ap_records(&ap_count, records.data());
+    if (err != ESP_OK) {
+        return Result<std::vector<WifiNetwork>>::fail(ErrorCode::NetworkError, "get scan records failed");
+    }
+
+    std::vector<WifiNetwork> networks;
+    networks.reserve(ap_count);
+    std::set<std::string> seen;
+    for (std::uint16_t i = 0; i < ap_count; ++i) {
+        const char* ssid = reinterpret_cast<const char*>(records[i].ssid);
+        if (ssid[0] == '\0') {
+            continue;
+        }
+        std::string name(ssid);
+        if (!seen.insert(name).second) {
+            continue; // keep strongest (records are usually RSSI-sorted)
+        }
+        WifiNetwork n;
+        n.ssid = std::move(name);
+        n.rssi = records[i].rssi;
+        n.channel = records[i].primary;
+        n.secure = records[i].authmode != WIFI_AUTH_OPEN;
+        networks.push_back(std::move(n));
+    }
+
+    std::sort(networks.begin(), networks.end(),
+              [](const WifiNetwork& a, const WifiNetwork& b) { return a.rssi > b.rssi; });
+
+    log.info("WiFi scan found %u networks", static_cast<unsigned>(networks.size()));
+    return Result<std::vector<WifiNetwork>>::ok(std::move(networks));
 }
 
 void WifiService::on_got_ip() {
@@ -183,8 +252,6 @@ Result<void> WifiService::start_mdns() {
     mdns_service_add("LumosOS", "_http", "_tcp", 80, nullptr, 0);
     mdns_service_add("LumosOS", "_lumosos", "_tcp", 80, nullptr, 0);
 
-    // HyperHDR Hyperk discovery typically scans mDNS for Hyperk/WLED-like services.
-    // Advertise a DDP-capable service so HyperHDR can locate the device.
     mdns_txt_item_t txt[] = {
         {"path", "/"},
         {"version", kAppVersion.data()},
@@ -203,6 +270,7 @@ WifiStatus WifiService::status() const {
 }
 
 void WifiService::stop() {
+    want_sta_connect_ = false;
     if (g_captive_dns) {
         g_captive_dns->stop();
         g_captive_dns.reset();

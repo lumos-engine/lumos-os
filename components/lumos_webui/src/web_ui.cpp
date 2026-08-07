@@ -3,7 +3,7 @@
 namespace lumos {
 namespace {
 
-// Minimal recovery UI — WiFi, plugin select, brightness, OTA, diagnostics.
+// Minimal recovery UI — WiFi scan, plugin select, brightness, OTA, diagnostics.
 constexpr const char* kIndexHtml = R"HTML(<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -19,8 +19,10 @@ section{background:var(--card);border:1px solid var(--line);border-radius:12px;p
 label{display:block;margin:.5rem 0 .25rem;color:var(--muted);font-size:.85rem}
 input,select,button{width:100%;padding:.65rem .75rem;border-radius:8px;border:1px solid var(--line);background:#0f141b;color:var(--text)}
 button{background:var(--accent);color:#041018;border:none;font-weight:600;margin-top:.75rem;cursor:pointer}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+button.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:end}
 pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem;color:var(--muted)}
+.hint{font-size:.8rem;color:var(--muted);margin-top:.5rem}
 </style>
 </head>
 <body>
@@ -32,9 +34,15 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </section>
 <section>
 <h2>WiFi</h2>
-<label>SSID</label><input id="ssid"/>
-<label>Password</label><input id="pass" type="password"/>
+<label>Nearby networks</label>
+<div class="row">
+  <select id="netlist"><option value="">Scanning…</option></select>
+  <button class="secondary" type="button" onclick="scanWifi()" style="margin-top:0;width:auto;padding:.65rem 1rem">Scan</button>
+</div>
+<label>SSID</label><input id="ssid" placeholder="Select above or type manually"/>
+<label>Password</label><input id="pass" type="password" placeholder="Router Wi‑Fi password"/>
 <button onclick="saveWifi()">Save &amp; Connect</button>
+<p class="hint">Phones can’t share their Wi‑Fi password with this page (browser security). Pick your network, then enter the password once.</p>
 </section>
 <section>
 <h2>Lighting</h2>
@@ -65,10 +73,34 @@ async function refresh(){
     sel.appendChild(o);
   }
 }
+async function scanWifi(){
+  const sel=document.getElementById('netlist');
+  sel.innerHTML='<option value="">Scanning…</option>';
+  try{
+    const data=await j('/api/v1/wifi/scan');
+    sel.innerHTML='';
+    const blank=document.createElement('option');
+    blank.value=''; blank.textContent=data.networks.length?'Select a network…':'No networks found — type SSID';
+    sel.appendChild(blank);
+    for(const n of data.networks){
+      const o=document.createElement('option');
+      o.value=n.ssid;
+      o.textContent=n.ssid+'  ('+n.rssi+' dBm'+(n.secure?' · locked':' · open')+')';
+      sel.appendChild(o);
+    }
+  }catch(e){
+    sel.innerHTML='<option value="">Scan failed — type SSID</option>';
+  }
+}
+document.getElementById('netlist').addEventListener('change',e=>{
+  if(e.target.value) document.getElementById('ssid').value=e.target.value;
+});
 async function saveWifi(){
+  const name=ssid.value.trim();
+  if(!name){alert('Select or enter an SSID');return;}
   await j('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ssid:ssid.value,password:pass.value})});
-  alert('Connecting… device may reboot to AP if join fails.');
+    body:JSON.stringify({ssid:name,password:pass.value})});
+  alert('Connecting… rejoin your home Wi‑Fi, then open http://lumosos.local');
 }
 async function applyLighting(){
   await j('/api/v1/brightness',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -82,7 +114,7 @@ async function uploadOta(){
   const r=await fetch('/api/v1/ota',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
   ota.textContent=await r.text();
 }
-refresh(); setInterval(refresh,3000);
+refresh(); scanWifi(); setInterval(refresh,3000);
 try{
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
   ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='state'){
@@ -102,7 +134,6 @@ esp_err_t WebUi::get_index(httpd_req_t* req) {
 }
 
 esp_err_t WebUi::get_captive(httpd_req_t* req) {
-    // Captive portal detection endpoints redirect to UI.
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "/");
     return httpd_resp_send(req, nullptr, 0);

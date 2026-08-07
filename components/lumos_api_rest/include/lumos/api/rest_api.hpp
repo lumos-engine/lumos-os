@@ -26,6 +26,7 @@ private:
     static esp_err_t get_settings(httpd_req_t* req);
     static esp_err_t post_settings(httpd_req_t* req);
     static esp_err_t get_status(httpd_req_t* req);
+    static esp_err_t get_wifi_scan(httpd_req_t* req);
     static esp_err_t post_wifi(httpd_req_t* req);
 
     static RestApi* from_req(httpd_req_t* req);

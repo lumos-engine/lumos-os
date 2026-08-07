@@ -308,6 +308,30 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     return err;
 }
 
+esp_err_t RestApi::get_wifi_scan(httpd_req_t* req) {
+    auto* self = from_req(req);
+    auto result = self->wifi_.scan();
+    if (!result) {
+        return send_json(req, "{\"error\":\"scan failed\"}", 400);
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* arr = cJSON_AddArrayToObject(root, "networks");
+    for (const auto& n : result.value()) {
+        cJSON* item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "ssid", n.ssid.c_str());
+        cJSON_AddNumberToObject(item, "rssi", n.rssi);
+        cJSON_AddNumberToObject(item, "channel", n.channel);
+        cJSON_AddBoolToObject(item, "secure", n.secure);
+        cJSON_AddItemToArray(arr, item);
+    }
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
+}
+
 esp_err_t RestApi::post_wifi(httpd_req_t* req) {
     auto* self = from_req(req);
     std::string body;
@@ -342,6 +366,7 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/settings", .method = HTTP_GET, .handler = get_settings, .user_ctx = this},
         {.uri = "/api/v1/settings", .method = HTTP_POST, .handler = post_settings, .user_ctx = this},
         {.uri = "/api/v1/status", .method = HTTP_GET, .handler = get_status, .user_ctx = this},
+        {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
     };
 
