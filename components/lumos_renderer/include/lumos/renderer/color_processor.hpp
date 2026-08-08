@@ -15,6 +15,10 @@ struct ColorProcessorConfig {
     Chipset chipset{Chipset::Ws2815};
     ColorOrder color_order{ColorOrder::Grb};
     WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
+    // Per-channel gain after gamma (255 = unity). Use to tame over-bright green diodes.
+    std::uint8_t balance_r{kDefaultChannelBalance};
+    std::uint8_t balance_g{kDefaultChannelBalance};
+    std::uint8_t balance_b{kDefaultChannelBalance};
 };
 
 // Color-space transforms between plugin framebuffer (RGB) and driver pixels.

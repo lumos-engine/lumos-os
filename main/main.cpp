@@ -82,6 +82,9 @@ extern "C" void app_main() {
         .gamma = device.gamma,
         .chipset = device.chipset,
         .color_order = device.color_order,
+        .balance_r = device.balance_r,
+        .balance_g = device.balance_g,
+        .balance_b = device.balance_b,
         .power = {.max_ma = device.power_limit_ma},
     };
     auto renderer = std::make_unique<lumos::Renderer>(*led_driver, renderer_cfg);

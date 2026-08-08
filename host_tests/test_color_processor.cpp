@@ -49,6 +49,26 @@ int main() {
     assert(rgbw_out[0].g == 10);
     assert(rgbw_out[0].b == 0);
 
+    // Green balance 128 ≈ half green → yellow tilts amber.
+    cp.configure({
+        .brightness = 255,
+        .gamma = 1.0f,
+        .chipset = Chipset::Sk6812Rgbw,
+        .color_order = ColorOrder::Rgb,
+        .white_algorithm = WhiteAlgorithm::ExtractMin,
+        .balance_r = 255,
+        .balance_g = 128,
+        .balance_b = 255,
+    });
+    std::vector<Rgb> yellow_in{{255, 255, 0}};
+    std::vector<Rgbw> yellow_out;
+    cp.process_rgbw(yellow_in, yellow_out);
+    assert(yellow_out.size() == 1);
+    assert(yellow_out[0].r == 255);
+    assert(yellow_out[0].g == 128);
+    assert(yellow_out[0].b == 0);
+    assert(yellow_out[0].w == 0);
+
     std::puts("test_color_processor OK");
     return 0;
 }

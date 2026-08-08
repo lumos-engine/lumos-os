@@ -17,6 +17,9 @@ struct RendererConfig {
     Chipset chipset{Chipset::Ws2815};
     ColorOrder color_order{ColorOrder::Grb};
     WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
+    std::uint8_t balance_r{kDefaultChannelBalance};
+    std::uint8_t balance_g{kDefaultChannelBalance};
+    std::uint8_t balance_b{kDefaultChannelBalance};
     PowerLimiterConfig power{};
 };
 
@@ -28,6 +31,7 @@ public:
     void set_brightness(Brightness b);
     Brightness brightness() const { return config_.brightness; }
     void set_gamma(float gamma);
+    void set_channel_balance(std::uint8_t r, std::uint8_t g, std::uint8_t b);
     void set_power_limit_ma(std::uint16_t ma);
     void set_chipset(Chipset chipset);
     void set_color_order(ColorOrder order);

@@ -29,6 +29,9 @@ struct DeviceSettings {
     ColorOrder color_order{ColorOrder::Grb};
     Brightness brightness{kDefaultBrightness};
     float gamma{kDefaultGamma};
+    std::uint8_t balance_r{kDefaultChannelBalance};
+    std::uint8_t balance_g{kDefaultChannelBalance};
+    std::uint8_t balance_b{kDefaultChannelBalance};
     std::uint16_t power_limit_ma{kDefaultPowerLimitMa};
     WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
     LedLayout layout{};

@@ -136,6 +136,9 @@ Result<void> Preferences::load() {
     get_u16("lay_left", device_.layout.left);
     device_.normalize_layout();
     get_u8("brightness", device_.brightness);
+    get_u8("bal_r", device_.balance_r);
+    get_u8("bal_g", device_.balance_g);
+    get_u8("bal_b", device_.balance_b);
     get_u16("power_ma", device_.power_limit_ma);
     get_u32("hh_timeout", device_.hyperhdr_timeout_ms);
 
@@ -195,6 +198,9 @@ Result<void> Preferences::save() {
     nvs_set_u16(handle, "lay_bottom", device_.layout.bottom);
     nvs_set_u16(handle, "lay_left", device_.layout.left);
     nvs_set_u8(handle, "brightness", device_.brightness);
+    nvs_set_u8(handle, "bal_r", device_.balance_r);
+    nvs_set_u8(handle, "bal_g", device_.balance_g);
+    nvs_set_u8(handle, "bal_b", device_.balance_b);
     nvs_set_u16(handle, "power_ma", device_.power_limit_ma);
     nvs_set_u32(handle, "hh_timeout", device_.hyperhdr_timeout_ms);
     nvs_set_u8(handle, "startup", static_cast<std::uint8_t>(device_.startup_plugin));

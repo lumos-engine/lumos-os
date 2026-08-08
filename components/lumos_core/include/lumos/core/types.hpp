@@ -33,6 +33,8 @@ inline constexpr LedIndex kDefaultLedCount = 140;
 inline constexpr int kDefaultLedGpio = 16;
 inline constexpr Brightness kDefaultBrightness = 128;
 inline constexpr float kDefaultGamma = 2.2f;
+// Per-channel gain 0–255 (255 = unity). Green often needs ~140–180 on SK6812 RGBW.
+inline constexpr std::uint8_t kDefaultChannelBalance = 255;
 inline constexpr std::uint16_t kDefaultPowerLimitMa = 5000;
 inline constexpr Milliseconds kDefaultHyperHdrTimeoutMs = 6500;
 

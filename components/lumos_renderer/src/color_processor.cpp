@@ -1,6 +1,19 @@
 #include "lumos/renderer/color_processor.hpp"
 
+#include "lumos/core/color.hpp"
+
 namespace lumos {
+namespace {
+
+Rgb apply_channel_balance(Rgb c, std::uint8_t br, std::uint8_t bg, std::uint8_t bb) {
+    return Rgb{
+        static_cast<std::uint8_t>((static_cast<unsigned>(c.r) * br + 127u) / 255u),
+        static_cast<std::uint8_t>((static_cast<unsigned>(c.g) * bg + 127u) / 255u),
+        static_cast<std::uint8_t>((static_cast<unsigned>(c.b) * bb + 127u) / 255u),
+    };
+}
+
+} // namespace
 
 ColorProcessor::ColorProcessor(ColorProcessorConfig config)
     : config_(config), gamma_(config.gamma) {}
@@ -38,6 +51,7 @@ void ColorProcessor::process_rgb(std::span<const Rgb> in, std::vector<Rgb>& out)
     const float brightness_scale = static_cast<float>(config_.brightness) / 255.0f;
     for (std::size_t i = 0; i < in.size(); ++i) {
         Rgb c = gamma_.apply(in[i]);
+        c = apply_channel_balance(c, config_.balance_r, config_.balance_g, config_.balance_b);
         // Keep logical RGB here — wire swizzle happens in the LED driver.
         out[i] = scale_rgb(c, brightness_scale);
     }
@@ -48,6 +62,7 @@ void ColorProcessor::process_rgbw(std::span<const Rgb> in, std::vector<Rgbw>& ou
     const float brightness_scale = static_cast<float>(config_.brightness) / 255.0f;
     for (std::size_t i = 0; i < in.size(); ++i) {
         Rgb c = gamma_.apply(in[i]);
+        c = apply_channel_balance(c, config_.balance_r, config_.balance_g, config_.balance_b);
         c = scale_rgb(c, brightness_scale);
         out[i] = rgb_to_rgbw(c, config_.white_algorithm);
     }

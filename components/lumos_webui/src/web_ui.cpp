@@ -107,6 +107,14 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <label>Plugin</label><select id="plugin" onchange="renderPluginParams()"></select>
 <div id="pluginParams"></div>
 <label>Brightness (0–255)</label><input id="brightness" type="number" min="0" max="255"/>
+<label>Channel balance R / G / B (255 = unity)</label>
+<div class="grid4">
+  <input id="balR" type="number" min="0" max="255" value="255" title="Red gain"/>
+  <input id="balG" type="number" min="0" max="255" value="255" title="Green gain"/>
+  <input id="balB" type="number" min="0" max="255" value="255" title="Blue gain"/>
+  <button type="button" onclick="applyBalanceLive()">Apply balance</button>
+</div>
+<p class="hint">SK6812 RGBW often needs green ~140–180 so yellow is amber, not lime. Applies live.</p>
 <button onclick="applyLighting()">Apply</button>
 </section>
 <section>
@@ -217,6 +225,9 @@ async function loadSettings(){
     if(typeof s.gpio==='number') gpio.value=s.gpio;
     if(typeof s.chipset==='number') chipset.value=String(s.chipset);
     if(typeof s.color_order==='number') colorOrder.value=String(s.color_order);
+    if(typeof s.balance_r==='number') balR.value=s.balance_r;
+    if(typeof s.balance_g==='number') balG.value=s.balance_g;
+    if(typeof s.balance_b==='number') balB.value=s.balance_b;
     if(s.layout){
       layTop.value=s.layout.top; layRight.value=s.layout.right;
       layBottom.value=s.layout.bottom; layLeft.value=s.layout.left;
@@ -300,6 +311,20 @@ async function saveWifi(){
     })});
     alert('Connecting… then open '+(useStatic.checked?('http://'+ip.value.trim()):'http://lumosos.local (or your hostname)'));
   }catch(e){ alert('Connect failed: '+e.message); }
+}
+async function applyBalanceLive(){
+  const body={
+    balance_r:Math.max(0,Math.min(255,Number(balR.value)||255)),
+    balance_g:Math.max(0,Math.min(255,Number(balG.value)||255)),
+    balance_b:Math.max(0,Math.min(255,Number(balB.value)||255)),
+    gamma:2.2
+  };
+  try{
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    await j('/api/v1/plugin/static',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({r:255,g:255,b:0})});
+    alert('Balance saved — strip showing (255,255,0). Tweak green until yellow looks right.');
+  }catch(e){ alert('Balance failed: '+e.message); }
 }
 async function applyColorOrderLive(){
   const order=Number(colorOrder.value);

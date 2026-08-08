@@ -11,6 +11,9 @@ Renderer::Renderer(ILedDriver& driver, RendererConfig config)
           .chipset = config.chipset,
           .color_order = config.color_order,
           .white_algorithm = config.white_algorithm,
+          .balance_r = config.balance_r,
+          .balance_g = config.balance_g,
+          .balance_b = config.balance_b,
       }),
       power_(config.power) {}
 
@@ -21,6 +24,9 @@ void Renderer::sync_color_processor() {
         .chipset = config_.chipset,
         .color_order = config_.color_order,
         .white_algorithm = config_.white_algorithm,
+        .balance_r = config_.balance_r,
+        .balance_g = config_.balance_g,
+        .balance_b = config_.balance_b,
     });
 }
 
@@ -39,6 +45,13 @@ void Renderer::set_brightness(Brightness b) {
 
 void Renderer::set_gamma(float gamma) {
     config_.gamma = gamma;
+    sync_color_processor();
+}
+
+void Renderer::set_channel_balance(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+    config_.balance_r = r;
+    config_.balance_g = g;
+    config_.balance_b = b;
     sync_color_processor();
 }
 

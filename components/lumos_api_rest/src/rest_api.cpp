@@ -319,6 +319,9 @@ esp_err_t RestApi::get_settings(httpd_req_t* req) {
     cJSON_AddNumberToObject(root, "white_algorithm", static_cast<int>(d.white_algorithm));
     cJSON_AddNumberToObject(root, "brightness", d.brightness);
     cJSON_AddNumberToObject(root, "gamma", d.gamma);
+    cJSON_AddNumberToObject(root, "balance_r", d.balance_r);
+    cJSON_AddNumberToObject(root, "balance_g", d.balance_g);
+    cJSON_AddNumberToObject(root, "balance_b", d.balance_b);
     cJSON_AddNumberToObject(root, "power_limit_ma", d.power_limit_ma);
     cJSON* layout = cJSON_AddObjectToObject(root, "layout");
     cJSON_AddNumberToObject(layout, "top", d.layout.top);
@@ -363,6 +366,22 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "gamma"); cJSON_IsNumber(v)) {
         d.gamma = static_cast<float>(v->valuedouble);
         self->renderer_.set_gamma(d.gamma);
+    }
+    bool balance_touched = false;
+    if (const cJSON* v = cJSON_GetObjectItem(json, "balance_r"); cJSON_IsNumber(v)) {
+        d.balance_r = static_cast<std::uint8_t>(std::clamp(v->valueint, 0, 255));
+        balance_touched = true;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "balance_g"); cJSON_IsNumber(v)) {
+        d.balance_g = static_cast<std::uint8_t>(std::clamp(v->valueint, 0, 255));
+        balance_touched = true;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "balance_b"); cJSON_IsNumber(v)) {
+        d.balance_b = static_cast<std::uint8_t>(std::clamp(v->valueint, 0, 255));
+        balance_touched = true;
+    }
+    if (balance_touched) {
+        self->renderer_.set_channel_balance(d.balance_r, d.balance_g, d.balance_b);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "power_limit_ma"); cJSON_IsNumber(v)) {
         d.power_limit_ma = static_cast<std::uint16_t>(v->valueint);
