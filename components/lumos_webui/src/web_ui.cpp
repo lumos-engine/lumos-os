@@ -116,13 +116,6 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <p class="hint">Read-only mDNS discovery on <code>_lumosos._tcp</code>. Open a peer by IP.</p>
 </section>
 <section>
-<h2>Matter</h2>
-<pre id="matterInfo">Loading…</pre>
-<button class="secondary" type="button" onclick="loadMatter()">Refresh pairing</button>
-<button type="button" onclick="resetMatter()">Factory reset Matter</button>
-<p class="hint">Use the manual code or QR payload in Apple Home / Google Home / Alexa. Wi‑Fi must already be configured on this device.</p>
-</section>
-<section>
 <h2>OTA Update</h2>
 <input id="firmware" type="file" accept=".bin"/>
 <button onclick="uploadOta()">Upload Firmware</button>
@@ -378,26 +371,9 @@ async function loadNeighbors(){
     }).join('\n\n');
   }catch(e){ neighbors.textContent='Neighbors unavailable: '+e.message; }
 }
-async function loadMatter(){
-  try{
-    const m=await j('/api/v1/matter');
-    matterInfo.textContent=JSON.stringify({
-      enabled:m.enabled, commissioned:m.commissioned,
-      manual_code:m.manual_code, qr_payload:m.qr_payload,
-      discriminator:m.discriminator, passcode:m.passcode
-    },null,2);
-  }catch(e){ matterInfo.textContent='Matter unavailable: '+e.message; }
-}
-async function resetMatter(){
-  if(!confirm('Clear Matter fabrics and reboot? Wi‑Fi settings are kept.')) return;
-  try{
-    await fetch('/api/v1/matter/factory-reset',{method:'POST'});
-    alert('Matter reset — device rebooting');
-  }catch(e){ alert('Reset failed: '+e.message); }
-}
 function onWsMessage(m){ if(m.type==='state') renderStatus(m); }
 loadSettings(); refresh(); scanWifi(); drawPreview();
-loadNeighbors(); loadMatter();
+loadNeighbors();
 pollLeds(); setInterval(pollLeds,150); setInterval(refresh,5000);
 setInterval(loadNeighbors,30000);
 try{

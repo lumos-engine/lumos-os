@@ -4,7 +4,6 @@
 #include "lumos/core/logger.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/led/ws2815_rmt_driver.hpp"
-#include "lumos/matter/matter_service.hpp"
 #include "lumos/ota/ota_service.hpp"
 #include "lumos/plugin/plugin_manager.hpp"
 #include "lumos/plugins/register_builtins.hpp"
@@ -132,22 +131,5 @@ extern "C" void app_main() {
     static auto s_ota = std::move(ota);
 
     xTaskCreate(render_loop, "render", 8192, s_plugins.get(), 6, nullptr);
-
-    // Defer Matter until STA has an IP so it does not race WiFi connect / brown-out boot.
-    xTaskCreate(
-        [](void*) {
-            for (int i = 0; i < 100; ++i) { // ~20s
-                if (s_wifi->status().connected) {
-                    break;
-                }
-                vTaskDelay(pdMS_TO_TICKS(200));
-            }
-            if (!lumos::MatterService::instance().start(*s_preferences, *s_plugins, *s_renderer)) {
-                log.warn("Matter start failed — lighting APIs still available");
-            }
-            vTaskDelete(nullptr);
-        },
-        "matter_boot", 8192, nullptr, 5, nullptr);
-
     log.info("LumosOS ready");
 }

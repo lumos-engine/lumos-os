@@ -16,5 +16,4 @@ idf_component_register(
         lumos_api_ws
         lumos_ota
         lumos_webui
-        lumos_matter
 )

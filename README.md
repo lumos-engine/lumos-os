@@ -16,7 +16,7 @@ LumosOS is an LED operating system. HyperHDR is one plugin among many.
 
 ## Features (v0.3)
 
-- Plugin framework with **capability metadata** for Studio / Matter UI generation
+- Plugin framework with **capability metadata** for Studio UI generation
 - Built-ins: Off, Static, Bias White, Rainbow, HyperHDR, Aurora, Fire, Twinkle
 - **ColorProcessor** pipeline: gamma → brightness → RGB→RGBW → power limit → driver
 - WS2815 / SK6812 RMT driver with RGBW (`led_strip_set_pixel_rgbw`)
@@ -25,22 +25,11 @@ LumosOS is an LED operating system. HyperHDR is one plugin among many.
 - WiFi STA + AP captive portal, static IP
 - **DHCP hostname** defaults to `LumosOS` (routers no longer show `espressif`)
 - **Multi-device discovery**: mDNS `_lumosos._tcp` + `GET /api/v1/neighbors`
-- **Matter** extended color light (OnOff / LevelControl / ColorControl) → Off / Static / Bias + brightness
 - REST + WebSocket APIs (`api: "0.3"`)
-- Browser OTA + recovery web UI (neighbors list, Matter pairing / factory reset)
+- Browser OTA + recovery web UI (neighbors list)
 - HyperHDR via **DDP** (UDP 4048) / Hyperk (`/json` + `/json/state`)
 
-Deferred to **v0.4**: Music Reactive.
-
-## Matter commissioning
-
-1. Connect the board to Wi‑Fi via the recovery UI (Matter does not replace LumosOS Wi‑Fi setup).
-2. Open the recovery UI → **Matter** section for the manual pairing code and QR payload string.
-3. Add the device in Apple Home / Google Home / Alexa using that code (BLE commissioning).
-4. Matter On/Off maps to the Off / Static (HSV) / Bias (color temperature) plugins; Level maps to device brightness.
-5. **Factory reset Matter** clears fabrics in NVS and reboots (Wi‑Fi credentials are kept). A full NVS erase also clears Matter.
-
-Default test passcode / discriminator follow ESP-Matter defaults (`20202021` / `3840`) unless factory data is provisioned.
+Deferred: **Matter** (ESP32-WROOM RAM too tight with the full stack; `lumos_matter` source kept), Music Reactive → v0.4+.
 
 ## Multi-device discovery
 
@@ -50,7 +39,7 @@ Default test passcode / discriminator follow ESP-Matter defaults (`20202021` / `
 
 ## Build
 
-Requires [ESP-IDF v5.3+](https://docs.espressif.com/projects/esp-idf/). Matter pulls `espressif/esp_matter` via the component manager (first build downloads a large dependency tree).
+Requires [ESP-IDF v5.3+](https://docs.espressif.com/projects/esp-idf/).
 
 ```bash
 . $HOME/esp/esp-idf/export.sh
@@ -58,8 +47,6 @@ idf.py set-target esp32
 idf.py build
 idf.py -p PORT flash monitor
 ```
-
-Watch app size vs the `0x1e0000` OTA slot if you enable additional Matter features.
 
 ## First boot
 
@@ -79,9 +66,9 @@ ctest --test-dir host_tests/build --output-on-failure
 
 ## Architecture
 
-Plugins render RGB into a framebuffer. `ColorProcessor` + `Renderer` own presentation (including RGBW). Plugins never touch the LED driver. `lumos_matter` bridges Matter clusters into PluginManager + Preferences.
+Plugins render RGB into a framebuffer. `ColorProcessor` + `Renderer` own presentation (including RGBW). Plugins never touch the LED driver.
 
-See `components/` for modular services (`lumos_core`, `lumos_plugin`, `lumos_renderer`, `lumos_matter`, …).
+See `components/` for modular services (`lumos_core`, `lumos_plugin`, `lumos_renderer`, …). Matter sources remain under `components/lumos_matter/` but are not linked.
 
 ## License
 

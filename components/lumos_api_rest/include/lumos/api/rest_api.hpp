@@ -31,8 +31,6 @@ private:
     static esp_err_t get_wifi_scan(httpd_req_t* req);
     static esp_err_t post_wifi(httpd_req_t* req);
     static esp_err_t get_neighbors(httpd_req_t* req);
-    static esp_err_t get_matter(httpd_req_t* req);
-    static esp_err_t post_matter_factory_reset(httpd_req_t* req);
     static esp_err_t get_wled_json(httpd_req_t* req);
     static esp_err_t put_wled_state(httpd_req_t* req);
 
