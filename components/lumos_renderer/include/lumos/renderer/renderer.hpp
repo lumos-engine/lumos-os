@@ -31,6 +31,7 @@ public:
     void set_power_limit_ma(std::uint16_t ma);
     void set_chipset(Chipset chipset);
     void set_color_order(ColorOrder order);
+    ColorOrder color_order() const { return config_.color_order; }
     void set_white_algorithm(WhiteAlgorithm algo);
 
     // Owns presentation: ColorProcessor → power → driver.

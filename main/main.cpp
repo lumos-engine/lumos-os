@@ -131,11 +131,23 @@ extern "C" void app_main() {
     static auto s_ws = std::move(ws);
     static auto s_ota = std::move(ota);
 
-    // Matter after WiFi stack exists; commissioning uses BLE / already-on-network.
-    if (!lumos::MatterService::instance().start(*s_preferences, *s_plugins, *s_renderer)) {
-        log.warn("Matter start failed — lighting APIs still available");
-    }
-
     xTaskCreate(render_loop, "render", 8192, s_plugins.get(), 6, nullptr);
+
+    // Defer Matter until STA has an IP so it does not race WiFi connect / brown-out boot.
+    xTaskCreate(
+        [](void*) {
+            for (int i = 0; i < 100; ++i) { // ~20s
+                if (s_wifi->status().connected) {
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
+            if (!lumos::MatterService::instance().start(*s_preferences, *s_plugins, *s_renderer)) {
+                log.warn("Matter start failed — lighting APIs still available");
+            }
+            vTaskDelete(nullptr);
+        },
+        "matter_boot", 8192, nullptr, 5, nullptr);
+
     log.info("LumosOS ready");
 }

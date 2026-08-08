@@ -26,6 +26,8 @@ public:
     virtual Result<void> clear() = 0;
     virtual LedIndex led_count() const = 0;
     virtual bool is_rgbw() const = 0;
+    virtual ColorOrder color_order() const = 0;
+    virtual void set_color_order(ColorOrder order) = 0;
     virtual void deinit() = 0;
 };
 

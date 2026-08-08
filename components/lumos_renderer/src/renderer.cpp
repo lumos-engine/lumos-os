@@ -28,6 +28,7 @@ Result<void> Renderer::init(LedIndex led_count) {
     scratch_rgb_.assign(led_count, Rgb::black());
     scratch_rgbw_.assign(led_count, Rgbw::black());
     sync_color_processor();
+    driver_.set_color_order(config_.color_order);
     return Result<void>::ok();
 }
 
@@ -54,6 +55,8 @@ void Renderer::set_chipset(Chipset chipset) {
 void Renderer::set_color_order(ColorOrder order) {
     config_.color_order = order;
     sync_color_processor();
+    // Wire swizzle is applied in the driver from logical RGB.
+    driver_.set_color_order(order);
 }
 
 void Renderer::set_white_algorithm(WhiteAlgorithm algo) {

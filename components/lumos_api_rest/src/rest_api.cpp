@@ -250,21 +250,32 @@ esp_err_t RestApi::post_plugin(httpd_req_t* req) {
 
     cJSON* json = body.empty() ? nullptr : cJSON_Parse(body.c_str());
     if (json != nullptr) {
+        // Accept either { "parameters": { ... } } or top-level { "r": 255, ... }.
         const cJSON* params = cJSON_GetObjectItem(json, "parameters");
-        if (cJSON_IsObject(params)) {
+        const cJSON* bag = cJSON_IsObject(params) ? params : json;
+        bool wrote = false;
+        if (cJSON_IsObject(bag)) {
             const cJSON* item = nullptr;
-            cJSON_ArrayForEach(item, params) {
+            cJSON_ArrayForEach(item, bag) {
+                if (item->string == nullptr || std::strcmp(item->string, "parameters") == 0) {
+                    continue;
+                }
                 if (cJSON_IsString(item)) {
                     self->preferences_.set_plugin_param(id, item->string, item->valuestring);
+                    wrote = true;
                 } else if (cJSON_IsNumber(item)) {
                     self->preferences_.set_plugin_param(id, item->string,
-                                                        std::to_string(item->valuedouble));
+                                                        std::to_string(static_cast<int>(item->valuedouble)));
+                    wrote = true;
                 } else if (cJSON_IsBool(item)) {
                     self->preferences_.set_plugin_param(id, item->string,
                                                         cJSON_IsTrue(item) ? "1" : "0");
+                    wrote = true;
                 }
             }
-            self->preferences_.save();
+            if (wrote) {
+                self->preferences_.save();
+            }
         }
         cJSON_Delete(json);
     }
@@ -382,11 +393,9 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "color_order"); cJSON_IsNumber(v)) {
         const auto next = static_cast<ColorOrder>(std::clamp(v->valueint, 0, 5));
-        if (next != d.color_order) {
-            d.color_order = next;
-            self->renderer_.set_color_order(next);
-            reboot_required = true;
-        }
+        d.color_order = next;
+        // Always push to renderer/driver (wire swizzle is live; no reboot).
+        self->renderer_.set_color_order(next);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "white_algorithm"); cJSON_IsNumber(v)) {
         d.white_algorithm = static_cast<WhiteAlgorithm>(std::clamp(v->valueint, 0, 0));
@@ -502,6 +511,7 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "active_plugin", self->plugins_.active_id().c_str());
     cJSON_AddBoolToObject(root, "in_fallback", self->plugins_.in_fallback());
     cJSON_AddNumberToObject(root, "brightness", self->renderer_.brightness());
+    cJSON_AddNumberToObject(root, "color_order", static_cast<int>(self->renderer_.color_order()));
     cJSON_AddNumberToObject(root, "power_scale", self->renderer_.last_power_scale());
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON* w = cJSON_AddObjectToObject(root, "wifi");

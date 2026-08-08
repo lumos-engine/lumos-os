@@ -20,6 +20,8 @@ public:
     Result<void> clear() override;
     LedIndex led_count() const override { return config_.led_count; }
     bool is_rgbw() const override { return config_.chipset == Chipset::Sk6812Rgbw; }
+    ColorOrder color_order() const override { return config_.color_order; }
+    void set_color_order(ColorOrder order) override { config_.color_order = order; }
     void deinit() override;
 
 private:

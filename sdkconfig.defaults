@@ -45,7 +45,8 @@ CONFIG_MBEDTLS_HKDF_C=y
 CONFIG_ENABLE_CHIPOBLE=y
 CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 
-# LumosOS owns SoftAP (LumosOS-Setup); Matter must not open MATTER-* AP
+# LumosOS owns Wi‑Fi (STA + SoftAP). Matter must not drive esp_wifi_connect / SoftAP.
+# CONFIG_ENABLE_WIFI_STATION is not set
 # CONFIG_ENABLE_WIFI_AP is not set
 
 # Share Espressif mdns with neighbors discovery (CHIP minimal mdns fights :5353)

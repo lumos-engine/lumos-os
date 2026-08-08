@@ -197,12 +197,14 @@ Result<void> MatterService::start(Preferences& preferences, PluginManager& plugi
         return Result<void>::fail(ErrorCode::Internal, "esp_matter::start failed");
     }
 
-    // LumosOS owns STA/SoftAP; stop CHIP from calling esp_wifi_connect / SoftAP.
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
+    // LumosOS owns STA; stop CHIP from calling esp_wifi_connect.
     auto wifi_mode = chip::DeviceLayer::ConnectivityMgr().SetWiFiStationMode(
         chip::DeviceLayer::ConnectivityManager::kWiFiStationMode_ApplicationControlled);
     if (wifi_mode != CHIP_NO_ERROR) {
         log.warn("Could not set Matter WiFi to application-controlled");
     }
+#endif
 #if CHIP_DEVICE_CONFIG_ENABLE_WIFI_AP
     (void)chip::DeviceLayer::ConnectivityMgr().SetWiFiAPMode(
         chip::DeviceLayer::ConnectivityManager::kWiFiAPMode_Disabled);

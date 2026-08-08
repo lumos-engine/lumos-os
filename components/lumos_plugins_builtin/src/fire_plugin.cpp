@@ -44,6 +44,7 @@ public:
         if (heat_.size() != fb.size()) {
             led_count_ = fb.size();
             heat_.assign(led_count_, 0);
+            heat_next_.assign(led_count_, 0);
         }
         const float intensity = intensity_ / 100.0f;
         for (LedIndex i = 0; i < fb.size(); ++i) {
@@ -81,13 +82,15 @@ private:
         }
 
         // 2) Diffuse along the strip (both directions for a perimeter).
-        std::vector<std::uint8_t> next = heat_;
+        if (heat_next_.size() != heat_.size()) {
+            heat_next_.assign(heat_.size(), 0);
+        }
         for (int i = 0; i < n; ++i) {
             const int left = (i + n - 1) % n;
             const int right = (i + 1) % n;
-            next[i] = static_cast<std::uint8_t>((heat_[i] + heat_[left] + heat_[right]) / 3);
+            heat_next_[i] = static_cast<std::uint8_t>((heat_[i] + heat_[left] + heat_[right]) / 3);
         }
-        heat_.swap(next);
+        heat_.swap(heat_next_);
 
         // 3) Random sparks — probability out of 255 (FastLED SPARKING semantics).
         if ((std::rand() % 255) < sparking_) {
@@ -119,6 +122,7 @@ private:
     Preferences* prefs_{nullptr};
     LedIndex led_count_{0};
     std::vector<std::uint8_t> heat_;
+    std::vector<std::uint8_t> heat_next_;
     float accum_{0.0f};
     int cooling_{55};
     int sparking_{120};

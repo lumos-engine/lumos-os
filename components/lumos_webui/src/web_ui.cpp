@@ -82,14 +82,15 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <option value="4">SK6812 RGBW</option>
 </select>
 <label>Color order</label>
-<select id="colorOrder">
-  <option value="0">GRB</option>
+<select id="colorOrder" onchange="applyColorOrderLive()">
+  <option value="0">GRB (WS2812/WS2815 common)</option>
   <option value="1">RGB</option>
   <option value="2">BRG</option>
   <option value="3">RBG</option>
   <option value="4">GBR</option>
   <option value="5">BGR</option>
 </select>
+<p class="hint" id="colorOrderHint">Changing this applies on the next frame (no reboot). Use Fire or a solid red Static color to judge.</p>
 <label>Layout (top / right / bottom / left) — must sum to LED count</label>
 <div class="grid4">
   <input id="layTop" type="number" min="0" placeholder="top"/>
@@ -99,7 +100,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </div>
 <p class="hint" id="layoutSum">Sum: —</p>
 <button onclick="saveStrip()">Save strip settings</button>
-<p class="hint">Chipset / GPIO / LED count changes reboot the device.</p>
+<p class="hint">Chipset / GPIO / LED count changes reboot the device. Color order applies live.</p>
 </section>
 <section>
 <h2>Lighting</h2>
@@ -306,6 +307,20 @@ async function saveWifi(){
     })});
     alert('Connecting… then open '+(useStatic.checked?('http://'+ip.value.trim()):'http://lumosos.local (or your hostname)'));
   }catch(e){ alert('Connect failed: '+e.message); }
+}
+async function applyColorOrderLive(){
+  const order=Number(colorOrder.value);
+  const names=['GRB','RGB','BRG','RBG','GBR','BGR'];
+  colorOrderHint.textContent='Applying '+names[order]+'…';
+  try{
+    // Dim test only — full-bright solid red can brown-out a weak 5V supply and reboot the board.
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({color_order:order,brightness:96})});
+    brightness.value=96;
+    await j('/api/v1/plugin/static',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({r:80,g:0,b:0})});
+    colorOrderHint.textContent=names[order]+' + dim red test. Correct order looks red (not green/blue). Then raise brightness.';
+  }catch(e){ colorOrderHint.textContent='Failed: '+e.message; }
 }
 async function saveStrip(){
   const body={

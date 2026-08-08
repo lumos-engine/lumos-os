@@ -38,6 +38,7 @@ void ColorProcessor::process_rgb(std::span<const Rgb> in, std::vector<Rgb>& out)
     const float brightness_scale = static_cast<float>(config_.brightness) / 255.0f;
     for (std::size_t i = 0; i < in.size(); ++i) {
         Rgb c = gamma_.apply(in[i]);
+        // Keep logical RGB here — wire swizzle happens in the LED driver.
         out[i] = scale_rgb(c, brightness_scale);
     }
 }
