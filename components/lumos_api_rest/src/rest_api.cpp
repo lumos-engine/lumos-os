@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace lumos {
@@ -184,6 +185,7 @@ esp_err_t RestApi::get_root(httpd_req_t* req) {
     cJSON* links = cJSON_AddObjectToObject(root, "links");
     cJSON_AddStringToObject(links, "plugins", "/api/v1/plugins");
     cJSON_AddStringToObject(links, "settings", "/api/v1/settings");
+    cJSON_AddStringToObject(links, "config", "/api/v1/config");
     cJSON_AddStringToObject(links, "status", "/api/v1/status");
     cJSON_AddStringToObject(links, "neighbors", "/api/v1/neighbors");
     cJSON_AddStringToObject(links, "ws", "/ws");
@@ -308,9 +310,7 @@ esp_err_t RestApi::post_brightness(httpd_req_t* req) {
     return send_json(req, "{\"ok\":true}");
 }
 
-esp_err_t RestApi::get_settings(httpd_req_t* req) {
-    auto* self = from_req(req);
-    const auto& d = self->preferences_.device();
+cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "led_count", d.led_count);
     cJSON_AddNumberToObject(root, "gpio", d.gpio);
@@ -334,38 +334,43 @@ esp_err_t RestApi::get_settings(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "hostname", d.hostname.c_str());
     cJSON_AddStringToObject(root, "last_used_plugin", d.last_used_plugin.c_str());
     cJSON_AddStringToObject(root, "wifi_ssid", d.wifi_ssid.c_str());
+    if (include_secrets) {
+        cJSON_AddStringToObject(root, "wifi_password", d.wifi_password.c_str());
+    }
     cJSON_AddBoolToObject(root, "wifi_use_static", d.wifi_use_static);
     cJSON_AddStringToObject(root, "wifi_ip", d.wifi_ip.c_str());
     cJSON_AddStringToObject(root, "wifi_gateway", d.wifi_gateway.c_str());
     cJSON_AddStringToObject(root, "wifi_netmask", d.wifi_netmask.c_str());
     cJSON_AddStringToObject(root, "wifi_dns1", d.wifi_dns1.c_str());
     cJSON_AddStringToObject(root, "wifi_dns2", d.wifi_dns2.c_str());
-    char* printed = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    esp_err_t err = send_json(req, printed);
-    cJSON_free(printed);
-    return err;
+    return root;
 }
 
-esp_err_t RestApi::post_settings(httpd_req_t* req) {
-    auto* self = from_req(req);
-    std::string body;
-    if (read_body(req, body) != ESP_OK) {
-        return send_json(req, "{\"error\":\"bad body\"}", 400);
+cJSON* plugin_params_to_json(const Preferences& preferences) {
+    cJSON* root = cJSON_CreateObject();
+    for (const auto& [plugin_id, params] : preferences.all_plugin_params()) {
+        cJSON* obj = cJSON_AddObjectToObject(root, plugin_id.c_str());
+        for (const auto& [key, value] : params) {
+            cJSON_AddStringToObject(obj, key.c_str(), value.c_str());
+        }
     }
-    cJSON* json = cJSON_Parse(body.c_str());
-    if (json == nullptr) {
-        return send_json(req, "{\"error\":\"invalid json\"}", 400);
-    }
-    auto& d = self->preferences_.device();
-    bool reboot_required = false;
+    return root;
+}
+
+// Applies flat device fields from JSON.
+void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* json,
+                           bool& reboot_required, bool& hostname_changed) {
+    auto& d = preferences.device();
+    reboot_required = false;
+    hostname_changed = false;
+
     if (const cJSON* v = cJSON_GetObjectItem(json, "brightness"); cJSON_IsNumber(v)) {
         d.brightness = static_cast<Brightness>(std::clamp(v->valueint, 0, 255));
-        self->renderer_.set_brightness(d.brightness);
+        renderer.set_brightness(d.brightness);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "gamma"); cJSON_IsNumber(v)) {
         d.gamma = static_cast<float>(v->valuedouble);
-        self->renderer_.set_gamma(d.gamma);
+        renderer.set_gamma(d.gamma);
     }
     bool balance_touched = false;
     if (const cJSON* v = cJSON_GetObjectItem(json, "balance_r"); cJSON_IsNumber(v)) {
@@ -381,11 +386,11 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         balance_touched = true;
     }
     if (balance_touched) {
-        self->renderer_.set_channel_balance(d.balance_r, d.balance_g, d.balance_b);
+        renderer.set_channel_balance(d.balance_r, d.balance_g, d.balance_b);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "power_limit_ma"); cJSON_IsNumber(v)) {
         d.power_limit_ma = static_cast<std::uint16_t>(v->valueint);
-        self->renderer_.set_power_limit_ma(d.power_limit_ma);
+        renderer.set_power_limit_ma(d.power_limit_ma);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "led_count"); cJSON_IsNumber(v)) {
         const auto next = static_cast<LedIndex>(std::clamp(v->valueint, 1, 2000));
@@ -404,19 +409,18 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
         const auto next = static_cast<Chipset>(std::clamp(v->valueint, 0, 4));
         if (next != d.chipset) {
             d.chipset = next;
-            self->renderer_.set_chipset(next);
+            renderer.set_chipset(next);
             reboot_required = true;
         }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "color_order"); cJSON_IsNumber(v)) {
         const auto next = static_cast<ColorOrder>(std::clamp(v->valueint, 0, 5));
         d.color_order = next;
-        // Always push to renderer/driver (wire swizzle is live; no reboot).
-        self->renderer_.set_color_order(next);
+        renderer.set_color_order(next);
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "white_algorithm"); cJSON_IsNumber(v)) {
         d.white_algorithm = static_cast<WhiteAlgorithm>(std::clamp(v->valueint, 0, 0));
-        self->renderer_.set_white_algorithm(d.white_algorithm);
+        renderer.set_white_algorithm(d.white_algorithm);
     }
     if (const cJSON* layout = cJSON_GetObjectItem(json, "layout"); cJSON_IsObject(layout)) {
         if (const cJSON* v = cJSON_GetObjectItem(layout, "top"); cJSON_IsNumber(v)) {
@@ -432,7 +436,6 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
             d.layout.left = static_cast<std::uint16_t>(std::max(0, v->valueint));
         }
         if (d.layout.total() != d.led_count) {
-            // Auto-normalize rather than reject (UI may send led_count before layout catches up).
             d.normalize_layout();
         }
     } else if (cJSON_GetObjectItem(json, "led_count") != nullptr && d.layout.total() != d.led_count) {
@@ -447,12 +450,20 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "hyperhdr_timeout_ms"); cJSON_IsNumber(v)) {
         d.hyperhdr_timeout_ms = static_cast<Milliseconds>(v->valueint);
     }
-    bool hostname_changed = false;
+    if (const cJSON* v = cJSON_GetObjectItem(json, "last_used_plugin"); cJSON_IsString(v)) {
+        d.last_used_plugin = v->valuestring;
+    }
     if (const cJSON* v = cJSON_GetObjectItem(json, "hostname"); cJSON_IsString(v)) {
         if (d.hostname != v->valuestring) {
             d.hostname = v->valuestring;
             hostname_changed = true;
         }
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_ssid"); cJSON_IsString(v)) {
+        d.wifi_ssid = v->valuestring;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_password"); cJSON_IsString(v)) {
+        d.wifi_password = v->valuestring;
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_use_static"); cJSON_IsBool(v)) {
         d.wifi_use_static = cJSON_IsTrue(v);
@@ -472,6 +483,58 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_dns2"); cJSON_IsString(v)) {
         d.wifi_dns2 = v->valuestring;
     }
+}
+
+void apply_plugin_params_json(Preferences& preferences, cJSON* plugins) {
+    if (!cJSON_IsObject(plugins)) {
+        return;
+    }
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> next;
+    for (cJSON* plugin = plugins->child; plugin != nullptr; plugin = plugin->next) {
+        if (!cJSON_IsObject(plugin) || plugin->string == nullptr) {
+            continue;
+        }
+        auto& params = next[plugin->string];
+        for (cJSON* item = plugin->child; item != nullptr; item = item->next) {
+            if (item->string == nullptr) {
+                continue;
+            }
+            if (cJSON_IsString(item)) {
+                params[item->string] = item->valuestring;
+            } else if (cJSON_IsNumber(item)) {
+                params[item->string] = std::to_string(item->valuedouble);
+            } else if (cJSON_IsBool(item)) {
+                params[item->string] = cJSON_IsTrue(item) ? "1" : "0";
+            }
+        }
+    }
+    preferences.replace_all_plugin_params(std::move(next));
+}
+
+esp_err_t RestApi::get_settings(httpd_req_t* req) {
+    auto* self = from_req(req);
+    cJSON* root = device_settings_to_json(self->preferences_.device(), false);
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
+}
+
+esp_err_t RestApi::post_settings(httpd_req_t* req) {
+    auto* self = from_req(req);
+    std::string body;
+    if (read_body(req, body) != ESP_OK) {
+        return send_json(req, "{\"error\":\"bad body\"}", 400);
+    }
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (json == nullptr) {
+        return send_json(req, "{\"error\":\"invalid json\"}", 400);
+    }
+    bool reboot_required = false;
+    bool hostname_changed = false;
+    apply_device_settings(self->preferences_, self->renderer_, json, reboot_required,
+                          hostname_changed);
     self->preferences_.save();
     if (hostname_changed) {
         self->wifi_.apply_hostname();
@@ -479,13 +542,107 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     }
     cJSON_Delete(json);
     if (reboot_required) {
-        // Framebuffer/driver size is fixed at boot.
         httpd_resp_set_type(req, "application/json");
         httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
         vTaskDelay(pdMS_TO_TICKS(250));
         esp_restart();
     }
     return send_json(req, "{\"ok\":true}");
+}
+
+esp_err_t RestApi::get_config(httpd_req_t* req) {
+    auto* self = from_req(req);
+    bool include_secrets = false;
+    char query[96];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[16];
+        if (httpd_query_key_value(query, "secrets", val, sizeof(val)) == ESP_OK) {
+            include_secrets = (std::strcmp(val, "1") == 0 || std::strcmp(val, "true") == 0);
+        }
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "schema", "lumosos.config.v1");
+    cJSON_AddStringToObject(root, "app", kAppName.data());
+    cJSON_AddStringToObject(root, "version", kAppVersion.data());
+    cJSON_AddStringToObject(root, "api", kApiVersion.data());
+    cJSON_AddItemToObject(root, "device",
+                          device_settings_to_json(self->preferences_.device(), include_secrets));
+    cJSON_AddItemToObject(root, "plugins", plugin_params_to_json(self->preferences_));
+
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"lumosos-config.json\"");
+    esp_err_t err = httpd_resp_send(req, printed, printed != nullptr ? HTTPD_RESP_USE_STRLEN : 0);
+    cJSON_free(printed);
+    return err;
+}
+
+esp_err_t RestApi::post_config(httpd_req_t* req) {
+    auto* self = from_req(req);
+    std::string body;
+    if (read_body(req, body) != ESP_OK) {
+        return send_json(req, "{\"error\":\"bad body\"}", 400);
+    }
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (json == nullptr) {
+        return send_json(req, "{\"error\":\"invalid json\"}", 400);
+    }
+
+    // Accept wrapped {schema,device,plugins} or a flat settings object.
+    cJSON* device = cJSON_GetObjectItem(json, "device");
+    if (!cJSON_IsObject(device)) {
+        if (cJSON_GetObjectItem(json, "led_count") != nullptr ||
+            cJSON_GetObjectItem(json, "chipset") != nullptr ||
+            cJSON_GetObjectItem(json, "balance_g") != nullptr) {
+            device = json;
+        } else {
+            cJSON_Delete(json);
+            return send_json(req, "{\"error\":\"missing device object\"}", 400);
+        }
+    }
+
+    const cJSON* schema = cJSON_GetObjectItem(json, "schema");
+    if (cJSON_IsString(schema) && std::strcmp(schema->valuestring, "lumosos.config.v1") != 0) {
+        cJSON_Delete(json);
+        return send_json(req, "{\"error\":\"unsupported config schema\"}", 400);
+    }
+
+    bool clear_static_ip = false;
+    if (const cJSON* v = cJSON_GetObjectItem(json, "clear_static_ip"); cJSON_IsBool(v)) {
+        clear_static_ip = cJSON_IsTrue(v);
+    }
+
+    bool reboot_required = false;
+    bool hostname_changed = false;
+    apply_device_settings(self->preferences_, self->renderer_, device, reboot_required,
+                          hostname_changed);
+    if (clear_static_ip) {
+        auto& d = self->preferences_.device();
+        d.wifi_use_static = false;
+        d.wifi_ip.clear();
+    }
+
+    if (const cJSON* plugins = cJSON_GetObjectItem(json, "plugins"); cJSON_IsObject(plugins)) {
+        apply_plugin_params_json(self->preferences_, const_cast<cJSON*>(plugins));
+    }
+
+    self->preferences_.save();
+    if (hostname_changed) {
+        self->wifi_.apply_hostname();
+        self->wifi_.start_mdns();
+    }
+    cJSON_Delete(json);
+
+    // Strip/GPIO/chipset size is fixed at boot — reboot so a clone comes up identically.
+    if (reboot_required) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+        vTaskDelay(pdMS_TO_TICKS(250));
+        esp_restart();
+    }
+    return send_json(req, "{\"ok\":true,\"reboot\":false}");
 }
 
 esp_err_t RestApi::get_neighbors(httpd_req_t* req) {
@@ -693,6 +850,8 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/brightness", .method = HTTP_POST, .handler = post_brightness, .user_ctx = this},
         {.uri = "/api/v1/settings", .method = HTTP_GET, .handler = get_settings, .user_ctx = this},
         {.uri = "/api/v1/settings", .method = HTTP_POST, .handler = post_settings, .user_ctx = this},
+        {.uri = "/api/v1/config", .method = HTTP_GET, .handler = get_config, .user_ctx = this},
+        {.uri = "/api/v1/config", .method = HTTP_POST, .handler = post_config, .user_ctx = this},
         {.uri = "/api/v1/status", .method = HTTP_GET, .handler = get_status, .user_ctx = this},
         {.uri = "/api/v1/leds", .method = HTTP_GET, .handler = get_leds, .user_ctx = this},
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},

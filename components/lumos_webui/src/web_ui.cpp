@@ -114,8 +114,20 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <input id="balB" type="number" min="0" max="255" value="255" title="Blue gain"/>
   <button type="button" onclick="applyBalanceLive()">Apply balance</button>
 </div>
-<p class="hint">SK6812 RGBW often needs green ~140–180 so yellow is amber, not lime. Applies live.</p>
+<p class="hint">SK6812 RGBW often needs green ~80–100 so yellow is amber, not lime. Applies live.</p>
 <button onclick="applyLighting()">Apply</button>
+</section>
+<section>
+<h2>Backup &amp; restore</h2>
+<p class="hint">Download a JSON config from this device, then upload it on a new ESP32 after flashing the same firmware. One-shot clone of strip, lighting, plugin params, and optional Wi‑Fi.</p>
+<label class="check"><input id="cfgSecrets" type="checkbox"/> Include Wi‑Fi password in download</label>
+<label class="check"><input id="cfgClearIp" type="checkbox" checked/> On import: clear static IP (use for a second device on the same LAN)</label>
+<div class="grid2">
+  <button type="button" onclick="downloadConfig()">Download config JSON</button>
+  <button class="secondary" type="button" onclick="cfgFile.click()" style="margin-top:.75rem">Upload config JSON…</button>
+</div>
+<input id="cfgFile" type="file" accept="application/json,.json" style="display:none" onchange="uploadConfig(event)"/>
+<pre id="cfgStatus"></pre>
 </section>
 <section>
 <h2>Nearby LumosOS</h2>
@@ -375,6 +387,50 @@ async function uploadOta(){
   ota.textContent='Uploading…';
   const r=await fetch('/api/v1/ota',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
   ota.textContent=await r.text();
+}
+async function downloadConfig(){
+  cfgStatus.textContent='Building config…';
+  try{
+    const url='/api/v1/config'+(cfgSecrets.checked?'?secrets=1':'');
+    const r=await fetch(url);
+    if(!r.ok) throw new Error(await r.text());
+    const text=await r.text();
+    const blob=new Blob([text],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='lumosos-config.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    cfgStatus.textContent='Downloaded lumosos-config.json'+(cfgSecrets.checked?' (includes Wi‑Fi password — keep private)':'');
+  }catch(e){ cfgStatus.textContent='Download failed: '+e.message; }
+}
+async function uploadConfig(ev){
+  const f=ev.target.files&&ev.target.files[0];
+  ev.target.value='';
+  if(!f) return;
+  cfgStatus.textContent='Reading '+f.name+'…';
+  try{
+    const text=await f.text();
+    const parsed=JSON.parse(text);
+    if(parsed&&parsed.device&&cfgClearIp.checked){
+      parsed.clear_static_ip=true;
+    } else if(parsed&&!parsed.device&&cfgClearIp.checked){
+      // Flat settings blob — strip static IP fields before apply.
+      parsed.wifi_use_static=false;
+      parsed.wifi_ip='';
+    }
+    const r=await fetch('/api/v1/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});
+    const t=await r.text();
+    if(!r.ok) throw new Error(t);
+    if(t.indexOf('"reboot":true')>=0){
+      cfgStatus.textContent='Config applied — rebooting… refresh shortly.';
+      alert('Config applied — device rebooting. Refresh this page in a few seconds.');
+      return;
+    }
+    cfgStatus.textContent='Config applied.';
+    await loadSettings(); await refresh();
+    alert('Config applied');
+  }catch(e){ cfgStatus.textContent='Upload failed: '+e.message; alert('Upload failed: '+e.message); }
 }
 async function pollLeds(){
   try{

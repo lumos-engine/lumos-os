@@ -27,6 +27,7 @@ LumosOS is an LED operating system. HyperHDR is one plugin among many.
 - **Multi-device discovery**: mDNS `_lumosos._tcp` + `GET /api/v1/neighbors`
 - REST + WebSocket APIs (`api: "0.3"`)
 - Browser OTA + recovery web UI (neighbors list)
+- **Config backup/restore**: `GET/POST /api/v1/config` JSON clone (strip, balance, plugins, optional Wi‑Fi)
 - HyperHDR via **DDP** (UDP 4048) / Hyperk (`/json` + `/json/state`)
 
 Deferred: **Matter** (ESP32-WROOM RAM too tight with the full stack; `lumos_matter` source kept), Music Reactive → v0.4+.

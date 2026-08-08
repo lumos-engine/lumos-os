@@ -68,6 +68,14 @@ public:
     std::unordered_map<std::string, std::string>& plugin_params(const std::string& plugin_id);
     const std::unordered_map<std::string, std::string>& plugin_params(
         const std::string& plugin_id) const;
+    const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>&
+    all_plugin_params() const {
+        return plugin_params_;
+    }
+    void replace_all_plugin_params(
+        std::unordered_map<std::string, std::unordered_map<std::string, std::string>> next) {
+        plugin_params_ = std::move(next);
+    }
 
     void set_plugin_param(const std::string& plugin_id, const std::string& key,
                           const std::string& value);

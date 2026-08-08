@@ -26,6 +26,8 @@ private:
     static esp_err_t post_brightness(httpd_req_t* req);
     static esp_err_t get_settings(httpd_req_t* req);
     static esp_err_t post_settings(httpd_req_t* req);
+    static esp_err_t get_config(httpd_req_t* req);
+    static esp_err_t post_config(httpd_req_t* req);
     static esp_err_t get_status(httpd_req_t* req);
     static esp_err_t get_leds(httpd_req_t* req);
     static esp_err_t get_wifi_scan(httpd_req_t* req);
