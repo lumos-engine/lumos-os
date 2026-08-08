@@ -131,18 +131,29 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <script>
 let wsLive=false;
 let ledRgb=null;
-let ledCount=0;
+let previewCount=0;
 let layoutSides={top:44,right:26,bottom:44,left:26};
 let pluginsCache=[];
 async function j(url,opts){const r=await fetch(url,opts); if(!r.ok) throw new Error(await r.text()); return r.json()}
 function toggleStatic(){document.getElementById('staticFields').classList.toggle('show', useStatic.checked);}
+function applyLayoutSides(sides){
+  layTop.value=sides.top; layRight.value=sides.right;
+  layBottom.value=sides.bottom; layLeft.value=sides.left;
+  layoutSides=sides;
+}
 function updateLayoutSum(){
   const s=[layTop,layRight,layBottom,layLeft].map(el=>Number(el.value)||0).reduce((a,b)=>a+b,0);
   const want=Number(ledCount.value)||0;
   layoutSum.textContent='Sum: '+s+(want?(' / '+want+(s===want?' ✓':' — mismatch')):'');
 }
-['layTop','layRight','layBottom','layLeft','ledCount'].forEach(id=>{
+['layTop','layRight','layBottom','layLeft'].forEach(id=>{
   document.getElementById(id).addEventListener('input', updateLayoutSum);
+});
+ledCount.addEventListener('input',()=>{
+  const n=Number(ledCount.value)||0;
+  const s=[layTop,layRight,layBottom,layLeft].map(el=>Number(el.value)||0).reduce((a,b)=>a+b,0);
+  if(n>0 && s!==n) applyLayoutSides(sideCounts(n));
+  updateLayoutSum();
 });
 function renderStatus(s){
   const view=Object.assign({},s); delete view.type;
@@ -160,6 +171,8 @@ function hexToBytes(hex){
   return out;
 }
 function sideCounts(n){
+  const cur={top:Number(layTop.value)||0,right:Number(layRight.value)||0,bottom:Number(layBottom.value)||0,left:Number(layLeft.value)||0};
+  if((cur.top+cur.right+cur.bottom+cur.left)===n) return cur;
   if(layoutSides && (layoutSides.top+layoutSides.right+layoutSides.bottom+layoutSides.left)===n) return layoutSides;
   if(n===140) return {top:44,right:26,bottom:44,left:26};
   if(n===340) return {top:144,right:26,bottom:144,left:26};
@@ -174,17 +187,17 @@ function drawPreview(){
   const pad=18;
   ctx.fillStyle='#121722'; ctx.strokeStyle='#2a3340'; ctx.lineWidth=2;
   roundRect(ctx,pad+14,pad+14,W-2*(pad+14),H-2*(pad+14),8); ctx.fill(); ctx.stroke();
-  const sides=ledCount?sideCounts(ledCount):null;
+  const sides=previewCount?sideCounts(previewCount):null;
   let lit=0;
-  if(ledRgb && ledCount){ for(let i=0;i<ledCount;i++){ const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++; } }
+  if(ledRgb && previewCount){ for(let i=0;i<previewCount;i++){ const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++; } }
   ctx.fillStyle='#8b95a8'; ctx.font='14px system-ui,sans-serif'; ctx.textAlign='center';
-  ctx.fillText(ledCount?(lit+' lit / '+ledCount+(sides?(' · '+sides.top+'/'+sides.right+'/'+sides.bottom+'/'+sides.left):'')):'Waiting for frames…', W/2, H/2);
-  if(!ledRgb || !ledCount || !sides) return;
+  ctx.fillText(previewCount?(lit+' lit / '+previewCount+(sides?(' · '+sides.top+'/'+sides.right+'/'+sides.bottom+'/'+sides.left):'')):'Waiting for frames…', W/2, H/2);
+  if(!ledRgb || !previewCount || !sides) return;
   const band=12; let idx=0;
-  for(let i=0;i<sides.top && idx<ledCount;i++,idx++){ const t=sides.top<=1?0.5:i/(sides.top-1); drawLed(ctx,pad+t*(W-2*pad),pad,band,ledRgb,idx); }
-  for(let i=0;i<sides.right && idx<ledCount;i++,idx++){ const t=sides.right<=1?0.5:i/(sides.right-1); drawLed(ctx,W-pad,pad+t*(H-2*pad),band,ledRgb,idx); }
-  for(let i=0;i<sides.bottom && idx<ledCount;i++,idx++){ const t=sides.bottom<=1?0.5:i/(sides.bottom-1); drawLed(ctx,W-pad-t*(W-2*pad),H-pad,band,ledRgb,idx); }
-  for(let i=0;i<sides.left && idx<ledCount;i++,idx++){ const t=sides.left<=1?0.5:i/(sides.left-1); drawLed(ctx,pad,H-pad-t*(H-2*pad),band,ledRgb,idx); }
+  for(let i=0;i<sides.top && idx<previewCount;i++,idx++){ const t=sides.top<=1?0.5:i/(sides.top-1); drawLed(ctx,pad+t*(W-2*pad),pad,band,ledRgb,idx); }
+  for(let i=0;i<sides.right && idx<previewCount;i++,idx++){ const t=sides.right<=1?0.5:i/(sides.right-1); drawLed(ctx,W-pad,pad+t*(H-2*pad),band,ledRgb,idx); }
+  for(let i=0;i<sides.bottom && idx<previewCount;i++,idx++){ const t=sides.bottom<=1?0.5:i/(sides.bottom-1); drawLed(ctx,W-pad-t*(W-2*pad),H-pad,band,ledRgb,idx); }
+  for(let i=0;i<sides.left && idx<previewCount;i++,idx++){ const t=sides.left<=1?0.5:i/(sides.left-1); drawLed(ctx,pad,H-pad-t*(H-2*pad),band,ledRgb,idx); }
 }
 function drawLed(ctx,x,y,size,rgb,idx){
   let r=rgb[idx*3], g=rgb[idx*3+1], b=rgb[idx*3+2];
@@ -333,7 +346,7 @@ async function uploadOta(){
 async function pollLeds(){
   try{
     const m=await j('/api/v1/leds');
-    if(m && m.rgb_hex){ ledCount=m.count||0; ledRgb=hexToBytes(m.rgb_hex); drawPreview(); }
+    if(m && m.rgb_hex){ previewCount=m.count||0; ledRgb=hexToBytes(m.rgb_hex); drawPreview(); }
   }catch{}
 }
 async function loadNeighbors(){

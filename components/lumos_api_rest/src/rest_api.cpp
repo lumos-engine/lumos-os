@@ -406,9 +406,11 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
             d.layout.left = static_cast<std::uint16_t>(std::max(0, v->valueint));
         }
         if (d.layout.total() != d.led_count) {
-            cJSON_Delete(json);
-            return send_json(req, "{\"error\":\"layout sides must sum to led_count\"}", 400);
+            // Auto-normalize rather than reject (UI may send led_count before layout catches up).
+            d.normalize_layout();
         }
+    } else if (cJSON_GetObjectItem(json, "led_count") != nullptr && d.layout.total() != d.led_count) {
+        d.normalize_layout();
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "startup_plugin"); cJSON_IsNumber(v)) {
         d.startup_plugin = static_cast<StartupPluginMode>(v->valueint);
