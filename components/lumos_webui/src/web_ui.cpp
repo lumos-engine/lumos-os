@@ -41,7 +41,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <section>
 <h2>Live preview</h2>
 <div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
-<p class="hint" id="previewHint">Clockwise from top-left. Enable calibration pick mode below to tap LEDs to ignore/restore.</p>
+<p class="hint" id="previewHint">TV layout (CW from top-left); wire orientation/skips come from Calibration.</p>
 </section>
 <section>
 <h2>Status</h2>
@@ -218,6 +218,8 @@ let wsLive=false;
 let ledRgb=null;
 let previewCount=0;
 let layoutSides={top:44,right:26,bottom:44,left:26};
+let activeToPhysical=[]; // logical CW-from-TL → physical wire index
+let geometryValid=false;
 let pluginsCache=[];
 let ignoredSet=new Set();
 let ledPositions=[]; // {i,x,y} physical wire index
@@ -237,11 +239,42 @@ function updateStripCounts(phys, active){
   stripCounts.textContent='Physical LEDs: '+(phys??'—')+' · Active (HyperHDR): '+(active??'—');
 }
 function updateLayoutSum(){}
-function physicalSideSplit(n){
-  if(n<=0) return {top:0,right:0,bottom:0,left:0};
-  const top=Math.round(n*16/50), right=Math.round(n*9/50), bottom=Math.round(n*16/50);
-  let left=n-top-right-bottom; if(left<0) left=0;
-  return {top,right,bottom,left};
+// Wire travel order of TV sides (matches firmware wire_side_order).
+function wireSideOrder(start, dir){
+  const cwFirst=[0,1,2,3]; // TL→Top, TR→Right, BR→Bottom, BL→Left
+  const ccwFirst=[3,0,1,2]; // TL→Left, TR→Top, BR→Right, BL→Bottom
+  const first=(dir===1?ccwFirst:cwFirst)[start|0];
+  const step=dir===1?-1:1;
+  const out=[];
+  for(let i=0;i<4;i++) out.push((first+step*i+4)%4);
+  return out;
+}
+// Build logical→physical when API map missing (skips + ignores + orientation + layout).
+function buildActiveToPhysicalLocal(physCount){
+  const T=layoutSides.top|0,R=layoutSides.right|0,B=layoutSides.bottom|0,L=layoutSides.left|0;
+  const active=T+R+B+L;
+  if(!physCount||!active) return [];
+  const skip0=Math.min(Number(skipStart.value)||0, physCount);
+  const skip1=Math.min(Number(skipEnd.value)||0, physCount-skip0);
+  const span=[];
+  for(let w=skip0;w<physCount-skip1;w++){ if(!ignoredSet.has(w)) span.push(w); }
+  if(span.length<active) return span.slice();
+  const start=Number(periStart.value)||0, dir=Number(periDir.value)||0;
+  const order=wireSideOrder(start, dir);
+  const counts=[T,R,B,L];
+  const base=[0,T,T+R,T+R+B];
+  const rev=dir===1;
+  const map=new Array(active);
+  let wire=0;
+  for(const side of order){
+    const n=counts[side];
+    for(let i=0;i<n;i++){
+      const logical=base[side]+(rev?(n-1-i):i);
+      if(wire<span.length && logical<active) map[logical]=span[wire];
+      wire++;
+    }
+  }
+  return map;
 }
 function renderStatus(s){
   const view=Object.assign({},s); delete view.type;
@@ -258,10 +291,6 @@ function hexToBytes(hex){
   for(let i=0;i<out.length;i++) out[i]=parseInt(hex.substr(i*2,2),16);
   return out;
 }
-function sideCounts(n){
-  // Preview positions follow physical wire around the frame.
-  return physicalSideSplit(n);
-}
 function drawPreview(){
   const canvas=ledPreview, ctx=canvas.getContext('2d');
   const W=canvas.width, H=canvas.height;
@@ -270,19 +299,52 @@ function drawPreview(){
   const pad=18;
   ctx.fillStyle='#121722'; ctx.strokeStyle='#2a3340'; ctx.lineWidth=2;
   roundRect(ctx,pad+14,pad+14,W-2*(pad+14),H-2*(pad+14),8); ctx.fill(); ctx.stroke();
-  const sides=previewCount?sideCounts(previewCount):null;
+  const T=layoutSides.top|0,R=layoutSides.right|0,B=layoutSides.bottom|0,L=layoutSides.left|0;
+  const act=T+R+B+L;
   let lit=0;
   if(ledRgb && previewCount){ for(let i=0;i<previewCount;i++){ const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++; } }
-  const act=layoutSides.top+layoutSides.right+layoutSides.bottom+layoutSides.left;
   ctx.fillStyle='#8b95a8'; ctx.font='14px system-ui,sans-serif'; ctx.textAlign='center';
-  ctx.fillText(previewCount?(lit+' lit / '+previewCount+' phys · HH '+act+' ('+layoutSides.top+'/'+layoutSides.right+'/'+layoutSides.bottom+'/'+layoutSides.left+')'):'Waiting for frames…', W/2, H/2);
-  if(!previewCount || !sides) return;
-  const band=12; let idx=0;
-  const place=(x,y)=>{ if(idx<previewCount){ ledPositions.push({i:idx,x,y}); drawLed(ctx,x,y,band,ledRgb,idx); idx++; } };
-  for(let i=0;i<sides.top && idx<previewCount;i++){ const t=sides.top<=1?0.5:i/(sides.top-1); place(pad+t*(W-2*pad),pad); }
-  for(let i=0;i<sides.right && idx<previewCount;i++){ const t=sides.right<=1?0.5:i/(sides.right-1); place(W-pad,pad+t*(H-2*pad)); }
-  for(let i=0;i<sides.bottom && idx<previewCount;i++){ const t=sides.bottom<=1?0.5:i/(sides.bottom-1); place(W-pad-t*(W-2*pad),H-pad); }
-  for(let i=0;i<sides.left && idx<previewCount;i++){ const t=sides.left<=1?0.5:i/(sides.left-1); place(pad,H-pad-t*(H-2*pad)); }
+  const geoTag=geometryValid?'geo✓':'geo?';
+  ctx.fillText(previewCount?(lit+' lit / '+previewCount+' phys · HH '+act+' ('+T+'/'+R+'/'+B+'/'+L+') · '+geoTag):'Waiting for frames…', W/2, H/2);
+  if(!previewCount || act<=0) return;
+
+  // Logical CW-from-TL ring on screen; colors from physical FB via orientation map.
+  let map=activeToPhysical;
+  if(map.length!==act) map=buildActiveToPhysicalLocal(previewCount);
+  if(map.length!==act) return;
+
+  const band=12;
+  ledPositions=[];
+  let logical=0;
+  const put=(count, xy)=>{
+    for(let i=0;i<count;i++,logical++){
+      const t=count<=1?0.5:i/(count-1);
+      const p=xy(t);
+      const phys=map[logical];
+      if(phys==null||phys>=previewCount) continue;
+      ledPositions.push({i:phys,x:p.x,y:p.y});
+      drawLed(ctx,p.x,p.y,band,ledRgb,phys);
+    }
+  };
+  put(T, t=>({x:pad+t*(W-2*pad), y:pad}));
+  put(R, t=>({x:W-pad, y:pad+t*(H-2*pad)}));
+  put(B, t=>({x:W-pad-t*(W-2*pad), y:H-pad}));
+  put(L, t=>({x:pad, y:H-pad-t*(H-2*pad)}));
+
+  // Skips: small ticks at wire ends (not on the TV ring).
+  const skip0=Number(skipStart.value)||0, skip1=Number(skipEnd.value)||0;
+  const tick=7;
+  for(let i=0;i<skip0 && i<previewCount;i++){
+    const x=pad-10, y=pad+8+i*3;
+    ledPositions.push({i:i,x:x,y:y});
+    drawLed(ctx,x,y,tick,ledRgb,i);
+  }
+  for(let k=0;k<skip1 && k<previewCount;k++){
+    const phys=previewCount-1-k;
+    const x=W-pad+10, y=H-pad-8-k*3;
+    ledPositions.push({i:phys,x:x,y:y});
+    drawLed(ctx,x,y,tick,ledRgb,phys);
+  }
   if(typeof calStatus!=='undefined' && calStatus) calStatus.textContent='Middle ignored: '+ignoredSet.size;
 }
 function drawLed(ctx,x,y,size,rgb,idx){
@@ -331,9 +393,12 @@ async function loadSettings(){
       layBottom.value=s.layout.bottom; layLeft.value=s.layout.left;
       layoutSides={top:s.layout.top,right:s.layout.right,bottom:s.layout.bottom,left:s.layout.left};
     }
+    activeToPhysical=Array.isArray(s.active_to_physical)?s.active_to_physical.map(Number):[];
+    geometryValid=!!s.geometry_valid;
     updateStripCounts(s.physical_led_count||s.led_count, s.active_led_count||(s.layout?(s.layout.top+s.layout.right+s.layout.bottom+s.layout.left):0));
     if(s.hyperhdr) updateHhCard(s.hyperhdr, s.geometry_valid);
     toggleStatic();
+    drawPreview();
   }catch{}
 }
 function renderPluginParams(){
@@ -475,7 +540,7 @@ function toggleCalPick(){
   ledPreview.parentElement.classList.toggle('cal-on', calPickOn);
   previewHint.textContent=calPickOn
     ? 'Pick mode — tap a LED (physical wire index) to ignore/restore.'
-    : 'Clockwise preview of the physical strip. Use Calibration wizard for counts.';
+    : 'Preview is TV layout (CW from top-left). Wire start/direction + skips are applied via the calibration map.';
 }
 async function persistIgnores(){
   const list=[...ignoredSet].sort((a,b)=>a-b);
@@ -517,6 +582,7 @@ async function wizSaveOrient(){
   try{
     await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       perimeter_start:Number(periStart.value), perimeter_direction:Number(periDir.value)})});
+    await loadSettings();
     await runCalMode('sides');
   }catch(e){ alert(e.message); }
 }
@@ -545,6 +611,7 @@ async function wizSaveSkips(){
     await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       edge_ignore:{skip_start:Number(skipStart.value)||0, skip_end:Number(skipEnd.value)||0,
         corner_tr:0,corner_br:0,corner_bl:0,corner_tl:0}})});
+    await loadSettings();
     await runCalMode('skips');
   }catch(e){ alert(e.message); }
 }
@@ -606,7 +673,7 @@ ledPreview.addEventListener('click', async (ev)=>{
     const d=(p.x-x)*(p.x-x)+(p.y-y)*(p.y-y);
     if(d<bestD){ bestD=d; best=p; }
   }
-  if(!best) return;
+  if(!best||best.i<0) return;
   if(ignoredSet.has(best.i)) ignoredSet.delete(best.i); else ignoredSet.add(best.i);
   midIndex.value=best.i;
   drawPreview();

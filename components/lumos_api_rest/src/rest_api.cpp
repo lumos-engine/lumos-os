@@ -353,6 +353,10 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     }
     const auto geo = d.geometry();
     cJSON_AddBoolToObject(root, "geometry_valid", geometry_counts_valid(geo));
+    cJSON* a2p = cJSON_AddArrayToObject(root, "active_to_physical");
+    for (std::uint16_t phys : geo.active_to_physical) {
+        cJSON_AddItemToArray(a2p, cJSON_CreateNumber(phys));
+    }
     cJSON* hh = cJSON_AddObjectToObject(root, "hyperhdr");
     cJSON_AddNumberToObject(hh, "leds", geo.hyperhdr_summary().leds);
     cJSON_AddNumberToObject(hh, "top", geo.hyperhdr_summary().top);
