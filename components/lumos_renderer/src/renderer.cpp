@@ -113,13 +113,25 @@ Result<void> Renderer::present(const Framebuffer& framebuffer) {
     const auto view = framebuffer.span();
     if (color_.is_rgbw()) {
         color_.process_rgbw(view, scratch_rgbw_);
+        if (scratch_rgbw_.size() < led_count_) {
+            scratch_rgbw_.resize(led_count_, Rgbw::black());
+        } else if (scratch_rgbw_.size() > led_count_) {
+            scratch_rgbw_.resize(led_count_);
+        }
         apply_ignore_to_rgbw();
         last_power_scale_ = power_.apply(scratch_rgbw_);
+        apply_ignore_to_rgbw();
         return driver_.show_rgbw(scratch_rgbw_);
     }
     color_.process_rgb(view, scratch_rgb_);
+    if (scratch_rgb_.size() < led_count_) {
+        scratch_rgb_.resize(led_count_, Rgb::black());
+    } else if (scratch_rgb_.size() > led_count_) {
+        scratch_rgb_.resize(led_count_);
+    }
     apply_ignore_to_rgb();
     last_power_scale_ = power_.apply(scratch_rgb_);
+    apply_ignore_to_rgb();
     return driver_.show(scratch_rgb_);
 }
 

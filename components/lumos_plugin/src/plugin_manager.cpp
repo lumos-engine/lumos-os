@@ -47,6 +47,12 @@ Result<void> PluginManager::activate(const std::string& plugin_id) {
         return Result<void>::fail(ErrorCode::NotFound, "plugin not found: " + plugin_id);
     }
 
+    // Already live — keep running. Callers update params in Preferences; plugins
+    // reload them on update(). Avoids NVS + stop/start glitches during identify.
+    if (active_ != nullptr && active_id_ == plugin_id) {
+        return Result<void>::ok();
+    }
+
     if (active_ != nullptr) {
         active_->stop();
     }
@@ -60,7 +66,8 @@ Result<void> PluginManager::activate(const std::string& plugin_id) {
         return start;
     }
 
-    if (plugin_id != "hyperhdr" || !in_fallback_) {
+    // Don't persist calibration as last-used (utility) — and skip NVS during identify spam.
+    if (plugin_id != "calibration" && (plugin_id != "hyperhdr" || !in_fallback_)) {
         preferences_.device().last_used_plugin = plugin_id;
         preferences_.save();
     }

@@ -50,10 +50,13 @@ Result<void> Ws2815RmtDriver::init(const LedDriverConfig& config) {
         .flags = {.invert_out = false},
     };
 
+    // Larger RMT memory block reduces Wi‑Fi/RMT contention glitches on ESP32.
+    // Default (0 → 64 symbols) often shows as random flashes on pixels that should
+    // stay black — lit pixels look fine, "off"/skip LEDs flicker.
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10 * 1000 * 1000,
-        .mem_block_symbols = 0,
+        .mem_block_symbols = 256,
         .flags = {.with_dma = false},
     };
 

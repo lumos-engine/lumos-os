@@ -140,22 +140,30 @@ inline LedGeometry build_led_geometry(LedIndex physical, LedLayoutCounts layout,
         for (LedIndex a = 0; a < g.active_to_physical.size(); ++a) {
             g.physical_to_active[g.active_to_physical[a]] = a;
         }
-        return g;
+    } else {
+        // Map logical active ring (CW from TL by layout counts) onto wire span via perimeter order.
+        // First build logical→span-offset using the same rules as build_perimeter_maps, but the
+        // "physical" domain here is the compacted span_active_wire list.
+        const auto peri = build_perimeter_maps(active, layout.top, layout.right, layout.bottom,
+                                               layout.left, start, direction);
+
+        g.active_to_physical.assign(active, 0);
+        for (LedIndex logical = 0; logical < active; ++logical) {
+            const auto span_i = peri.logical_to_physical[logical];
+            if (span_i < span_active_wire.size()) {
+                const auto wire = span_active_wire[span_i];
+                g.active_to_physical[logical] = wire;
+                g.physical_to_active[wire] = logical;
+            }
+        }
     }
 
-    // Map logical active ring (CW from TL by layout counts) onto wire span via perimeter order.
-    // First build logical→span-offset using the same rules as build_perimeter_maps, but the
-    // "physical" domain here is the compacted span_active_wire list.
-    const auto peri = build_perimeter_maps(active, layout.top, layout.right, layout.bottom,
-                                           layout.left, start, direction);
-
-    g.active_to_physical.assign(active, 0);
-    for (LedIndex logical = 0; logical < active; ++logical) {
-        const auto span_i = peri.logical_to_physical[logical];
-        if (span_i < span_active_wire.size()) {
-            const auto wire = span_active_wire[span_i];
-            g.active_to_physical[logical] = wire;
-            g.physical_to_active[wire] = logical;
+    // Any wire LED not mapped to HyperHDR active stays forced-off at present().
+    // Covers leftover span LEDs when physical > skips + active (not yet measured).
+    for (LedIndex w = 0; w < physical; ++w) {
+        if (g.physical_to_active[w] == 0xFFFF) {
+            g.physical_ignore_mask[w / 8] =
+                static_cast<std::uint8_t>(g.physical_ignore_mask[w / 8] | (1u << (w % 8)));
         }
     }
     return g;

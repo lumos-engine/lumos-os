@@ -91,15 +91,20 @@ public:
         }
 
         if (mode_ == "edge_range") {
+            // Inclusive wire range; endpoints marked distinctly. Outside stays black
+            // (fb.fill above). Ignore-mask is off so skips can be measured if needed.
             const LedIndex a = std::min(range_start_, range_end_);
             const LedIndex b = std::max(range_start_, range_end_);
-            for (LedIndex i = a; i <= b && i < fb.size(); ++i) {
-                fb[i] = Rgb{40, 180, 255};
+            if (a < fb.size()) {
+                const LedIndex last = std::min(b, static_cast<LedIndex>(fb.size() - 1));
+                for (LedIndex i = a; i <= last; ++i) {
+                    fb[i] = Rgb{40, 180, 255};
+                }
             }
             if (range_start_ < fb.size()) {
                 fb[range_start_] = Rgb{255, 255, 255};
             }
-            if (range_end_ < fb.size()) {
+            if (range_end_ < fb.size() && range_end_ != range_start_) {
                 fb[range_end_] = Rgb{255, 80, 80};
             }
             return;

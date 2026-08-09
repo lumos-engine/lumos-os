@@ -277,7 +277,11 @@ esp_err_t RestApi::post_plugin(httpd_req_t* req) {
                     wrote = true;
                 }
             }
-            if (wrote) {
+            if (wrote && std::strcmp(id, "calibration") != 0) {
+                // Calibration identify params change many times/sec during the wizard.
+                // Full NVS commits stall the render task and glitch WS281x/RMT output
+                // (random LEDs outside the intended range flicker). Keep RAM-only;
+                // settings/config POSTs still persist.
                 self->preferences_.save();
             }
         }

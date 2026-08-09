@@ -134,6 +134,7 @@ extern "C" void app_main() {
     static auto s_ws = std::move(ws);
     static auto s_ota = std::move(ota);
 
-    xTaskCreate(render_loop, "render", 8192, s_plugins.get(), 6, nullptr);
+    // Core 1 keeps LED RMT away from Wi‑Fi (usually core 0); reduces black-pixel flicker.
+    xTaskCreatePinnedToCore(render_loop, "render", 8192, s_plugins.get(), 7, nullptr, 1);
     log.info("LumosOS ready");
 }
