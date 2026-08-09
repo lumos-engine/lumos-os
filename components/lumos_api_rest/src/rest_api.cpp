@@ -808,7 +808,9 @@ esp_err_t RestApi::post_config(httpd_req_t* req) {
 
 esp_err_t RestApi::get_neighbors(httpd_req_t* req) {
     auto* self = from_req(req);
-    const auto json = neighbors_to_json(self->wifi_.neighbors());
+    // Default: cached only. ?refresh=1 runs mDNS (can glitch LEDs) — UI Refresh button only.
+    const bool refresh = std::strstr(req->uri, "refresh=1") != nullptr;
+    const auto json = neighbors_to_json(self->wifi_.neighbors(refresh));
     return send_json(req, json.c_str());
 }
 

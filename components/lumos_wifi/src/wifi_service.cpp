@@ -432,15 +432,11 @@ Result<void> WifiService::start_mdns() {
     return Result<void>::ok();
 }
 
-void WifiService::refresh_neighbors_if_stale() {
-    const std::int64_t now_ms = esp_timer_get_time() / 1000;
-    constexpr std::int64_t kTtlMs = 30000;
-    if (neighbors_cache_ms_ != 0 && (now_ms - neighbors_cache_ms_) < kTtlMs) {
-        return;
-    }
-
+void WifiService::refresh_neighbors() {
+    // Keep the browse short — long mDNS queries starve RMT and flash "off" LEDs white.
     mdns_result_t* results = nullptr;
-    esp_err_t err = mdns_query_ptr("_lumosos", "_tcp", 2000, 20, &results);
+    esp_err_t err = mdns_query_ptr("_lumosos", "_tcp", 400, 12, &results);
+    const std::int64_t now_ms = esp_timer_get_time() / 1000;
     if (err != ESP_OK) {
         log.warn("mDNS neighbor browse failed: %s", esp_err_to_name(err));
         neighbors_cache_ms_ = now_ms;
@@ -508,8 +504,10 @@ void WifiService::refresh_neighbors_if_stale() {
     log.info("mDNS neighbors: %u", static_cast<unsigned>(neighbors_cache_.size()));
 }
 
-std::vector<NeighborInfo> WifiService::neighbors() {
-    refresh_neighbors_if_stale();
+std::vector<NeighborInfo> WifiService::neighbors(bool refresh) {
+    if (refresh) {
+        refresh_neighbors();
+    }
     return neighbors_cache_;
 }
 

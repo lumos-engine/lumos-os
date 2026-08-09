@@ -63,14 +63,15 @@ public:
     // Apply preferences hostname to STA DHCP/netif (routers show this, not "espressif").
     void apply_hostname();
 
-    // Browse _lumosos._tcp peers (excludes self). Results cached ~30s.
-    std::vector<NeighborInfo> neighbors();
+    // Cached peer list. Pass refresh=true only from an explicit UI action —
+    // mDNS browse briefly glitches WS281x/RMT on ESP32.
+    std::vector<NeighborInfo> neighbors(bool refresh = false);
 
 private:
     void ensure_netif();
     Result<void> start_sta_from_prefs();
     Result<void> apply_sta_ip_config();
-    void refresh_neighbors_if_stale();
+    void refresh_neighbors();
     static std::string mdns_hostname_label(const std::string& hostname);
 
     Preferences& preferences_;

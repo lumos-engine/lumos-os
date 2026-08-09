@@ -721,7 +721,9 @@ async function pollLeds(){
 }
 async function loadNeighbors(){
   try{
-    const data=await j('/api/v1/neighbors');
+    neighbors.textContent='Scanning…';
+    // refresh=1 only on explicit click — auto mDNS every 30s was flashing LEDs white.
+    const data=await j('/api/v1/neighbors?refresh=1');
     const list=data.neighbors||[];
     if(!list.length){ neighbors.textContent='No other LumosOS devices found on this LAN.'; return; }
     neighbors.textContent=list.map(n=>{
@@ -736,9 +738,8 @@ async function loadNeighbors(){
 function onWsMessage(m){ if(m.type==='state') renderStatus(m); }
 showWiz();
 loadSettings(); refresh(); scanWifi(); drawPreview();
-loadNeighbors();
-pollLeds(); setInterval(pollLeds,150); setInterval(refresh,5000);
-setInterval(loadNeighbors,30000);
+neighbors.textContent='Click Refresh to scan for nearby LumosOS devices.';
+pollLeds(); setInterval(pollLeds,300); setInterval(refresh,5000);
 try{
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
   ws.onopen=()=>{wsLive=true}; ws.onclose=()=>{wsLive=false}; ws.onerror=()=>{wsLive=false};
