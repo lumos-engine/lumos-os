@@ -41,7 +41,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <section>
 <h2>Live preview</h2>
 <div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
-<p class="hint" id="previewHint">TV layout (CW from top-left); wire orientation/skips come from Calibration.</p>
+<p class="hint" id="previewHint">TV view: only active HyperHDR LEDs (top/right/bottom/left). Skips stay off the ring.</p>
 </section>
 <section>
 <h2>Status</h2>
@@ -296,25 +296,30 @@ function drawPreview(){
   const W=canvas.width, H=canvas.height;
   ledPositions=[];
   ctx.clearRect(0,0,W,H); ctx.fillStyle='#07090d'; ctx.fillRect(0,0,W,H);
-  const pad=18;
+  const pad=22;
   ctx.fillStyle='#121722'; ctx.strokeStyle='#2a3340'; ctx.lineWidth=2;
-  roundRect(ctx,pad+14,pad+14,W-2*(pad+14),H-2*(pad+14),8); ctx.fill(); ctx.stroke();
+  roundRect(ctx,pad+16,pad+16,W-2*(pad+16),H-2*(pad+16),8); ctx.fill(); ctx.stroke();
   const T=layoutSides.top|0,R=layoutSides.right|0,B=layoutSides.bottom|0,L=layoutSides.left|0;
   const act=T+R+B+L;
-  let lit=0;
-  if(ledRgb && previewCount){ for(let i=0;i<previewCount;i++){ const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++; } }
-  ctx.fillStyle='#8b95a8'; ctx.font='14px system-ui,sans-serif'; ctx.textAlign='center';
-  const geoTag=geometryValid?'geo✓':'geo?';
-  ctx.fillText(previewCount?(lit+' lit / '+previewCount+' phys · HH '+act+' ('+T+'/'+R+'/'+B+'/'+L+') · '+geoTag):'Waiting for frames…', W/2, H/2);
-  if(!previewCount || act<=0) return;
-
-  // Logical CW-from-TL ring on screen; colors from physical FB via orientation map.
+  // Count lit among active (TV) LEDs only.
   let map=activeToPhysical;
   if(map.length!==act) map=buildActiveToPhysicalLocal(previewCount);
-  if(map.length!==act) return;
+  let lit=0;
+  if(ledRgb && map.length===act){
+    for(let i=0;i<act;i++){
+      const phys=map[i]; if(phys==null||phys>=previewCount) continue;
+      const o=phys*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++;
+    }
+  }
+  const skip0=Number(skipStart.value)||0, skip1=Number(skipEnd.value)||0;
+  ctx.fillStyle='#8b95a8'; ctx.font='13px system-ui,sans-serif'; ctx.textAlign='center';
+  ctx.fillText(act?(lit+' lit · TV '+act+' ('+T+'/'+R+'/'+B+'/'+L+')'+(geometryValid?'':' · calib incomplete')):'Waiting for calibration…', W/2, H/2-8);
+  if(previewCount) ctx.fillText('wire '+previewCount+' · skip '+skip0+'+'+skip1+' (hidden)', W/2, H/2+12);
+  if(!previewCount || act<=0 || map.length!==act) return;
 
-  const band=12;
-  ledPositions=[];
+  // TV view only: active HyperHDR LEDs on the four sides (CW from top-left).
+  // Skips / unused wire LEDs are intentionally not drawn.
+  const band=Math.max(5, Math.min(11, Math.floor(Math.min(W,H)/(Math.max(T,R,B,L)+8))));
   let logical=0;
   const put=(count, xy)=>{
     for(let i=0;i<count;i++,logical++){
@@ -330,21 +335,6 @@ function drawPreview(){
   put(R, t=>({x:W-pad, y:pad+t*(H-2*pad)}));
   put(B, t=>({x:W-pad-t*(W-2*pad), y:H-pad}));
   put(L, t=>({x:pad, y:H-pad-t*(H-2*pad)}));
-
-  // Skips: small ticks at wire ends (not on the TV ring).
-  const skip0=Number(skipStart.value)||0, skip1=Number(skipEnd.value)||0;
-  const tick=7;
-  for(let i=0;i<skip0 && i<previewCount;i++){
-    const x=pad-10, y=pad+8+i*3;
-    ledPositions.push({i:i,x:x,y:y});
-    drawLed(ctx,x,y,tick,ledRgb,i);
-  }
-  for(let k=0;k<skip1 && k<previewCount;k++){
-    const phys=previewCount-1-k;
-    const x=W-pad+10, y=H-pad-8-k*3;
-    ledPositions.push({i:phys,x:x,y:y});
-    drawLed(ctx,x,y,tick,ledRgb,phys);
-  }
   if(typeof calStatus!=='undefined' && calStatus) calStatus.textContent='Middle ignored: '+ignoredSet.size;
 }
 function drawLed(ctx,x,y,size,rgb,idx){
