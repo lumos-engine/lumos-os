@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lumos/core/color.hpp"
+#include "lumos/core/led_calibration.hpp"
 #include "lumos/core/mode_map.hpp"
 #include "lumos/core/result.hpp"
 #include "lumos/core/types.hpp"
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace lumos {
 
@@ -35,6 +37,10 @@ struct DeviceSettings {
     std::uint16_t power_limit_ma{kDefaultPowerLimitMa};
     WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
     LedLayout layout{};
+    // Physical indices that stay off (ends, corner folds, dead pixels).
+    std::vector<std::uint16_t> ignored_leds{};
+    // Last edge-mark params (UI convenience; mask source of truth is ignored_leds).
+    EdgeIgnoreParams edge_ignore{};
     StartupPluginMode startup_plugin{StartupPluginMode::HyperHdr};
     FallbackPluginMode fallback_plugin{FallbackPluginMode::Bias};
     Milliseconds hyperhdr_timeout_ms{kDefaultHyperHdrTimeoutMs};
@@ -53,6 +59,7 @@ struct DeviceSettings {
 
     // Ensure layout sides sum to led_count (16:9-ish distribution if mismatched).
     void normalize_layout();
+    void normalize_ignored_leds();
 };
 
 class Preferences {

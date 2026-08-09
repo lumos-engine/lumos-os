@@ -29,7 +29,8 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 #staticFields{display:none}
 #staticFields.show{display:block}
 .preview-wrap{position:relative;width:100%;aspect-ratio:16/9;background:#07090d;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
-.preview-wrap canvas{display:block;width:100%;height:100%}
+.preview-wrap canvas{display:block;width:100%;height:100%;cursor:crosshair}
+.preview-wrap.cal-on{outline:1px solid #c9a227}
 .param{margin-top:.5rem}
 .advanced{opacity:.85}
 </style>
@@ -40,7 +41,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <section>
 <h2>Live preview</h2>
 <div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
-<p class="hint">Clockwise from top-left. Layout comes from device settings (not hardcoded).</p>
+<p class="hint" id="previewHint">Clockwise from top-left. Enable calibration pick mode below to tap LEDs to ignore/restore.</p>
 </section>
 <section>
 <h2>Status</h2>
@@ -103,6 +104,35 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <p class="hint">Chipset / GPIO / LED count changes reboot the device. Color order applies live.</p>
 </section>
 <section>
+<h2>Calibration · edges</h2>
+<p class="hint">Ignore LEDs at strip ends and corner folds. Ignored LEDs stay black for every plugin (HyperHDR included).</p>
+<label class="check"><input id="calPick" type="checkbox" onchange="toggleCalPick()"/> Tap preview to toggle ignore</label>
+<div class="grid2">
+  <div><label>Skip start</label><input id="skipStart" type="number" min="0" max="200" value="0"/></div>
+  <div><label>Skip end</label><input id="skipEnd" type="number" min="0" max="200" value="0"/></div>
+</div>
+<label>Corner ignores (TR / BR / BL / TL)</label>
+<div class="grid4">
+  <input id="cornerTr" type="number" min="0" max="50" value="0" title="Top→right"/>
+  <input id="cornerBr" type="number" min="0" max="50" value="0" title="Right→bottom"/>
+  <input id="cornerBl" type="number" min="0" max="50" value="0" title="Bottom→left"/>
+  <input id="cornerTl" type="number" min="0" max="50" value="0" title="Left→top"/>
+</div>
+<div class="grid2">
+  <button type="button" onclick="markEdges()">Mark edges → ignore list</button>
+  <button class="secondary" type="button" onclick="clearIgnores()" style="margin-top:.75rem">Clear all ignores</button>
+</div>
+<p class="hint" id="calStatus">Ignored: 0 · Active: —</p>
+<div class="grid2">
+  <button class="secondary" type="button" onclick="runCalibration('sides')" style="margin-top:.75rem">Identify sides</button>
+  <button class="secondary" type="button" onclick="runCalibration('chase')" style="margin-top:.75rem">Chase all LEDs</button>
+</div>
+<div class="grid2">
+  <button class="secondary" type="button" onclick="runCalibration('map')" style="margin-top:.75rem">Show map (active/ignored)</button>
+  <button class="secondary" type="button" onclick="runCalibration('active')" style="margin-top:.75rem">Light active only</button>
+</div>
+</section>
+<section>
 <h2>Lighting</h2>
 <label>Plugin</label><select id="plugin" onchange="renderPluginParams()"></select>
 <div id="pluginParams"></div>
@@ -148,6 +178,9 @@ let ledRgb=null;
 let previewCount=0;
 let layoutSides={top:44,right:26,bottom:44,left:26};
 let pluginsCache=[];
+let ignoredSet=new Set();
+let ledPositions=[]; // {i,x,y} in canvas coords for hit-testing
+let calPickOn=false;
 async function j(url,opts){const r=await fetch(url,opts); if(!r.ok) throw new Error(await r.text()); return r.json()}
 function toggleStatic(){document.getElementById('staticFields').classList.toggle('show', useStatic.checked);}
 function applyLayoutSides(sides){
@@ -197,6 +230,7 @@ function sideCounts(n){
 function drawPreview(){
   const canvas=ledPreview, ctx=canvas.getContext('2d');
   const W=canvas.width, H=canvas.height;
+  ledPositions=[];
   ctx.clearRect(0,0,W,H); ctx.fillStyle='#07090d'; ctx.fillRect(0,0,W,H);
   const pad=18;
   ctx.fillStyle='#121722'; ctx.strokeStyle='#2a3340'; ctx.lineWidth=2;
@@ -204,21 +238,31 @@ function drawPreview(){
   const sides=previewCount?sideCounts(previewCount):null;
   let lit=0;
   if(ledRgb && previewCount){ for(let i=0;i<previewCount;i++){ const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++; } }
+  const active=previewCount? (previewCount-ignoredSet.size) : 0;
   ctx.fillStyle='#8b95a8'; ctx.font='14px system-ui,sans-serif'; ctx.textAlign='center';
-  ctx.fillText(previewCount?(lit+' lit / '+previewCount+(sides?(' · '+sides.top+'/'+sides.right+'/'+sides.bottom+'/'+sides.left):'')):'Waiting for frames…', W/2, H/2);
-  if(!ledRgb || !previewCount || !sides) return;
+  ctx.fillText(previewCount?(lit+' lit / '+previewCount+' · active '+active+(sides?(' · '+sides.top+'/'+sides.right+'/'+sides.bottom+'/'+sides.left):'')):'Waiting for frames…', W/2, H/2);
+  if(!previewCount || !sides) return;
   const band=12; let idx=0;
-  for(let i=0;i<sides.top && idx<previewCount;i++,idx++){ const t=sides.top<=1?0.5:i/(sides.top-1); drawLed(ctx,pad+t*(W-2*pad),pad,band,ledRgb,idx); }
-  for(let i=0;i<sides.right && idx<previewCount;i++,idx++){ const t=sides.right<=1?0.5:i/(sides.right-1); drawLed(ctx,W-pad,pad+t*(H-2*pad),band,ledRgb,idx); }
-  for(let i=0;i<sides.bottom && idx<previewCount;i++,idx++){ const t=sides.bottom<=1?0.5:i/(sides.bottom-1); drawLed(ctx,W-pad-t*(W-2*pad),H-pad,band,ledRgb,idx); }
-  for(let i=0;i<sides.left && idx<previewCount;i++,idx++){ const t=sides.left<=1?0.5:i/(sides.left-1); drawLed(ctx,pad,H-pad-t*(H-2*pad),band,ledRgb,idx); }
+  const place=(x,y)=>{ if(idx<previewCount){ ledPositions.push({i:idx,x,y}); drawLed(ctx,x,y,band,ledRgb,idx); idx++; } };
+  for(let i=0;i<sides.top && idx<previewCount;i++){ const t=sides.top<=1?0.5:i/(sides.top-1); place(pad+t*(W-2*pad),pad); }
+  for(let i=0;i<sides.right && idx<previewCount;i++){ const t=sides.right<=1?0.5:i/(sides.right-1); place(W-pad,pad+t*(H-2*pad)); }
+  for(let i=0;i<sides.bottom && idx<previewCount;i++){ const t=sides.bottom<=1?0.5:i/(sides.bottom-1); place(W-pad-t*(W-2*pad),H-pad); }
+  for(let i=0;i<sides.left && idx<previewCount;i++){ const t=sides.left<=1?0.5:i/(sides.left-1); place(pad,H-pad-t*(H-2*pad)); }
+  if(typeof calStatus!=='undefined') calStatus.textContent='Ignored: '+ignoredSet.size+' · Active: '+active;
 }
 function drawLed(ctx,x,y,size,rgb,idx){
-  let r=rgb[idx*3], g=rgb[idx*3+1], b=rgb[idx*3+2];
+  const ignored=ignoredSet.has(idx);
+  let r=28,g=34,b=44;
+  if(rgb){ r=rgb[idx*3]; g=rgb[idx*3+1]; b=rgb[idx*3+2]; }
   const lit=r|g|b; if(!lit){ r=28;g=34;b=44; }
+  if(ignored){ r=90; g=50; b=20; }
   ctx.beginPath(); ctx.fillStyle='rgb('+r+','+g+','+b+')';
-  if(lit){ ctx.shadowColor='rgba('+r+','+g+','+b+',0.55)'; ctx.shadowBlur=10; }
+  if(lit && !ignored){ ctx.shadowColor='rgba('+r+','+g+','+b+',0.55)'; ctx.shadowBlur=10; }
   ctx.arc(x,y,size/2,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
+  if(ignored){
+    ctx.beginPath(); ctx.strokeStyle='#c9a227'; ctx.lineWidth=1.5;
+    ctx.arc(x,y,size/2+1,0,Math.PI*2); ctx.stroke();
+  }
 }
 function roundRect(ctx,x,y,w,h,r){
   ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
@@ -240,6 +284,15 @@ async function loadSettings(){
     if(typeof s.balance_r==='number') balR.value=s.balance_r;
     if(typeof s.balance_g==='number') balG.value=s.balance_g;
     if(typeof s.balance_b==='number') balB.value=s.balance_b;
+    if(s.edge_ignore){
+      skipStart.value=s.edge_ignore.skip_start||0;
+      skipEnd.value=s.edge_ignore.skip_end||0;
+      cornerTr.value=s.edge_ignore.corner_tr||0;
+      cornerBr.value=s.edge_ignore.corner_br||0;
+      cornerBl.value=s.edge_ignore.corner_bl||0;
+      cornerTl.value=s.edge_ignore.corner_tl||0;
+    }
+    ignoredSet=new Set(Array.isArray(s.ignored_leds)?s.ignored_leds:[]);
     if(s.layout){
       layTop.value=s.layout.top; layRight.value=s.layout.right;
       layBottom.value=s.layout.bottom; layLeft.value=s.layout.left;
@@ -388,6 +441,70 @@ async function uploadOta(){
   const r=await fetch('/api/v1/ota',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
   ota.textContent=await r.text();
 }
+function toggleCalPick(){
+  calPickOn=!!calPick.checked;
+  ledPreview.parentElement.classList.toggle('cal-on', calPickOn);
+  previewHint.textContent=calPickOn
+    ? 'Pick mode on — tap an LED to ignore (amber ring) or restore. Saved immediately.'
+    : 'Clockwise from top-left. Enable calibration pick mode below to tap LEDs to ignore/restore.';
+}
+async function persistIgnores(){
+  const list=[...ignoredSet].sort((a,b)=>a-b);
+  await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ignored_leds:list})});
+  calStatus.textContent='Ignored: '+list.length+' · Active: '+(previewCount-list.length)+' · saved';
+  drawPreview();
+}
+async function markEdges(){
+  const body={
+    edge_ignore:{
+      skip_start:Number(skipStart.value)||0,
+      skip_end:Number(skipEnd.value)||0,
+      corner_tr:Number(cornerTr.value)||0,
+      corner_br:Number(cornerBr.value)||0,
+      corner_bl:Number(cornerBl.value)||0,
+      corner_tl:Number(cornerTl.value)||0
+    },
+    mark_edges:true
+  };
+  try{
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    await loadSettings(); drawPreview();
+    await j('/api/v1/plugin/calibration',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:'map'})});
+    calStatus.textContent='Edges marked · Ignored: '+ignoredSet.size+' · showing map';
+  }catch(e){ alert('Mark edges failed: '+e.message); }
+}
+async function clearIgnores(){
+  ignoredSet=new Set();
+  try{
+    await persistIgnores();
+    alert('Cleared ignore list');
+  }catch(e){ alert(e.message); }
+}
+async function runCalibration(mode){
+  try{
+    await j('/api/v1/plugin/calibration',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:mode,speed:0.35})});
+    plugin.value='calibration'; renderPluginParams();
+    calStatus.textContent='Calibration mode: '+mode;
+  }catch(e){ alert(e.message); }
+}
+ledPreview.addEventListener('click', async (ev)=>{
+  if(!calPickOn || !ledPositions.length) return;
+  const rect=ledPreview.getBoundingClientRect();
+  const scaleX=ledPreview.width/rect.width, scaleY=ledPreview.height/rect.height;
+  const x=(ev.clientX-rect.left)*scaleX, y=(ev.clientY-rect.top)*scaleY;
+  let best=null, bestD=18*18;
+  for(const p of ledPositions){
+    const d=(p.x-x)*(p.x-x)+(p.y-y)*(p.y-y);
+    if(d<bestD){ bestD=d; best=p; }
+  }
+  if(!best) return;
+  if(ignoredSet.has(best.i)) ignoredSet.delete(best.i); else ignoredSet.add(best.i);
+  drawPreview();
+  try{ await persistIgnores(); }catch(e){ calStatus.textContent='Save failed: '+e.message; }
+});
 async function downloadConfig(){
   cfgStatus.textContent='Building config…';
   try{

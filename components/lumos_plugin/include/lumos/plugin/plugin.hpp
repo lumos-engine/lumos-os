@@ -10,6 +10,8 @@
 
 namespace lumos {
 
+class Renderer;
+
 enum class ParamType : std::uint8_t {
     Bool = 0,
     Int,
@@ -61,6 +63,7 @@ struct PluginDescriptor {
 
 struct PluginContext {
     Preferences* preferences{nullptr};
+    Renderer* renderer{nullptr};
     LedIndex led_count{kDefaultLedCount};
     // Optional callback: HyperHDR asks core to activate fallback plugin.
     std::function<void(const std::string& plugin_id)> request_fallback;

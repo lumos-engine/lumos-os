@@ -47,3 +47,7 @@ add_test(NAME test_plugin_lifecycle COMMAND test_plugin_lifecycle)
 add_executable(test_matter_map test_matter_map.cpp)
 target_link_libraries(test_matter_map PRIVATE lumos_host_logic)
 add_test(NAME test_matter_map COMMAND test_matter_map)
+
+add_executable(test_led_calibration test_led_calibration.cpp)
+target_link_libraries(test_led_calibration PRIVATE lumos_host_logic)
+add_test(NAME test_led_calibration COMMAND test_led_calibration)

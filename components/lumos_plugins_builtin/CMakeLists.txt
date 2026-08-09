@@ -9,8 +9,9 @@ idf_component_register(
         "src/aurora_plugin.cpp"
         "src/fire_plugin.cpp"
         "src/twinkle_plugin.cpp"
+        "src/calibration_plugin.cpp"
         "src/ddp_transport.cpp"
         "src/ddp_parser.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES lumos_core lumos_plugin lumos_preferences lwip esp_netif esp_timer
+    REQUIRES lumos_core lumos_plugin lumos_preferences lumos_renderer lwip esp_netif esp_timer
 )

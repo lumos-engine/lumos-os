@@ -7,6 +7,7 @@
 #include "lumos/renderer/color_processor.hpp"
 #include "lumos/renderer/power_limiter.hpp"
 
+#include <cstdint>
 #include <vector>
 
 namespace lumos {
@@ -38,6 +39,12 @@ public:
     ColorOrder color_order() const { return config_.color_order; }
     void set_white_algorithm(WhiteAlgorithm algo);
 
+    // Calibration: force listed physical indices off at present (unless bypassed).
+    void set_ignored_leds(const std::vector<std::uint16_t>& indices);
+    void set_apply_led_ignore(bool enabled);
+    bool apply_led_ignore() const { return apply_ignore_; }
+    LedIndex ignored_count() const { return ignored_count_; }
+
     // Owns presentation: ColorProcessor → power → driver.
     Result<void> present(const Framebuffer& framebuffer);
 
@@ -46,6 +53,8 @@ public:
 
 private:
     void sync_color_processor();
+    void apply_ignore_to_rgb();
+    void apply_ignore_to_rgbw();
 
     ILedDriver& driver_;
     RendererConfig config_{};
@@ -53,6 +62,10 @@ private:
     PowerLimiter power_;
     std::vector<Rgb> scratch_rgb_;
     std::vector<Rgbw> scratch_rgbw_;
+    std::vector<std::uint8_t> ignore_mask_{};
+    bool apply_ignore_{true};
+    LedIndex led_count_{0};
+    LedIndex ignored_count_{0};
     float last_power_scale_{1.0f};
 };
 

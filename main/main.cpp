@@ -89,6 +89,7 @@ extern "C" void app_main() {
     };
     auto renderer = std::make_unique<lumos::Renderer>(*led_driver, renderer_cfg);
     renderer->init(device.led_count);
+    renderer->set_ignored_leds(device.ignored_leds);
 
     auto framebuffer = std::make_unique<lumos::Framebuffer>(device.led_count);
     auto plugins = std::make_unique<lumos::PluginManager>(*preferences, *renderer, *framebuffer);

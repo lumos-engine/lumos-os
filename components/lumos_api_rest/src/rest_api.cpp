@@ -1,4 +1,5 @@
 #include "lumos/api/rest_api.hpp"
+#include "lumos/core/led_calibration.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/wifi/neighbor_info.hpp"
 
@@ -328,6 +329,19 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON_AddNumberToObject(layout, "right", d.layout.right);
     cJSON_AddNumberToObject(layout, "bottom", d.layout.bottom);
     cJSON_AddNumberToObject(layout, "left", d.layout.left);
+    cJSON* edge = cJSON_AddObjectToObject(root, "edge_ignore");
+    cJSON_AddNumberToObject(edge, "skip_start", d.edge_ignore.skip_start);
+    cJSON_AddNumberToObject(edge, "skip_end", d.edge_ignore.skip_end);
+    cJSON_AddNumberToObject(edge, "corner_tr", d.edge_ignore.corner_tr);
+    cJSON_AddNumberToObject(edge, "corner_br", d.edge_ignore.corner_br);
+    cJSON_AddNumberToObject(edge, "corner_bl", d.edge_ignore.corner_bl);
+    cJSON_AddNumberToObject(edge, "corner_tl", d.edge_ignore.corner_tl);
+    cJSON* ignored = cJSON_AddArrayToObject(root, "ignored_leds");
+    for (std::uint16_t idx : d.ignored_leds) {
+        cJSON_AddItemToArray(ignored, cJSON_CreateNumber(idx));
+    }
+    cJSON_AddNumberToObject(root, "active_led_count",
+                            static_cast<int>(d.led_count) - static_cast<int>(d.ignored_leds.size()));
     cJSON_AddNumberToObject(root, "startup_plugin", static_cast<int>(d.startup_plugin));
     cJSON_AddNumberToObject(root, "fallback_plugin", static_cast<int>(d.fallback_plugin));
     cJSON_AddNumberToObject(root, "hyperhdr_timeout_ms", d.hyperhdr_timeout_ms);
@@ -482,6 +496,53 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "wifi_dns2"); cJSON_IsString(v)) {
         d.wifi_dns2 = v->valuestring;
+    }
+
+    if (const cJSON* edge = cJSON_GetObjectItem(json, "edge_ignore"); cJSON_IsObject(edge)) {
+        if (const cJSON* v = cJSON_GetObjectItem(edge, "skip_start"); cJSON_IsNumber(v)) {
+            d.edge_ignore.skip_start = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(edge, "skip_end"); cJSON_IsNumber(v)) {
+            d.edge_ignore.skip_end = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(edge, "corner_tr"); cJSON_IsNumber(v)) {
+            d.edge_ignore.corner_tr = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(edge, "corner_br"); cJSON_IsNumber(v)) {
+            d.edge_ignore.corner_br = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(edge, "corner_bl"); cJSON_IsNumber(v)) {
+            d.edge_ignore.corner_bl = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+        if (const cJSON* v = cJSON_GetObjectItem(edge, "corner_tl"); cJSON_IsNumber(v)) {
+            d.edge_ignore.corner_tl = static_cast<std::uint16_t>(std::max(0, v->valueint));
+        }
+    }
+
+    bool ignore_touched = false;
+    if (const cJSON* arr = cJSON_GetObjectItem(json, "ignored_leds"); cJSON_IsArray(arr)) {
+        d.ignored_leds.clear();
+        const int n = cJSON_GetArraySize(arr);
+        d.ignored_leds.reserve(static_cast<std::size_t>(std::max(0, n)));
+        for (int i = 0; i < n; ++i) {
+            const cJSON* item = cJSON_GetArrayItem(arr, i);
+            if (cJSON_IsNumber(item) && item->valueint >= 0) {
+                d.ignored_leds.push_back(static_cast<std::uint16_t>(item->valueint));
+            }
+        }
+        ignore_touched = true;
+    }
+
+    // Rebuild ignore list from edge params (replaces ignored_leds).
+    if (const cJSON* v = cJSON_GetObjectItem(json, "mark_edges"); cJSON_IsTrue(v)) {
+        d.ignored_leds = edge_ignore_indices(d.led_count, d.layout.top, d.layout.right,
+                                             d.layout.bottom, d.layout.left, d.edge_ignore);
+        ignore_touched = true;
+    }
+
+    if (ignore_touched) {
+        d.normalize_ignored_leds();
+        renderer.set_ignored_leds(d.ignored_leds);
     }
 }
 

@@ -9,6 +9,7 @@ Logger log{"plugin_mgr"};
 
 PluginManager::PluginManager(Preferences& preferences, Renderer& renderer, Framebuffer& framebuffer)
     : preferences_(preferences), renderer_(renderer), framebuffer_(framebuffer) {
+    context_.renderer = &renderer_;
     context_.preferences = &preferences_;
     context_.led_count = preferences_.device().led_count;
     context_.request_fallback = [this](const std::string& id) {

@@ -1,4 +1,5 @@
 #include "lumos/renderer/renderer.hpp"
+#include "lumos/core/led_calibration.hpp"
 
 namespace lumos {
 
@@ -31,11 +32,52 @@ void Renderer::sync_color_processor() {
 }
 
 Result<void> Renderer::init(LedIndex led_count) {
+    led_count_ = led_count;
     scratch_rgb_.assign(led_count, Rgb::black());
     scratch_rgbw_.assign(led_count, Rgbw::black());
+    ignore_mask_.assign((led_count + 7) / 8, 0);
+    ignored_count_ = 0;
     sync_color_processor();
     driver_.set_color_order(config_.color_order);
     return Result<void>::ok();
+}
+
+void Renderer::set_ignored_leds(const std::vector<std::uint16_t>& indices) {
+    ignore_mask_ = ignore_mask_from_indices(led_count_, indices);
+    ignored_count_ = static_cast<LedIndex>(indices.size());
+    // Re-count after clamp inside mask builder.
+    ignored_count_ = 0;
+    for (LedIndex i = 0; i < led_count_; ++i) {
+        if (ignore_mask_test(ignore_mask_, i)) {
+            ++ignored_count_;
+        }
+    }
+}
+
+void Renderer::set_apply_led_ignore(bool enabled) {
+    apply_ignore_ = enabled;
+}
+
+void Renderer::apply_ignore_to_rgb() {
+    if (!apply_ignore_ || ignored_count_ == 0) {
+        return;
+    }
+    for (LedIndex i = 0; i < scratch_rgb_.size(); ++i) {
+        if (ignore_mask_test(ignore_mask_, i)) {
+            scratch_rgb_[i] = Rgb::black();
+        }
+    }
+}
+
+void Renderer::apply_ignore_to_rgbw() {
+    if (!apply_ignore_ || ignored_count_ == 0) {
+        return;
+    }
+    for (LedIndex i = 0; i < scratch_rgbw_.size(); ++i) {
+        if (ignore_mask_test(ignore_mask_, i)) {
+            scratch_rgbw_[i] = Rgbw::black();
+        }
+    }
 }
 
 void Renderer::set_brightness(Brightness b) {
@@ -81,10 +123,12 @@ Result<void> Renderer::present(const Framebuffer& framebuffer) {
     const auto view = framebuffer.span();
     if (color_.is_rgbw()) {
         color_.process_rgbw(view, scratch_rgbw_);
+        apply_ignore_to_rgbw();
         last_power_scale_ = power_.apply(scratch_rgbw_);
         return driver_.show_rgbw(scratch_rgbw_);
     }
     color_.process_rgb(view, scratch_rgb_);
+    apply_ignore_to_rgb();
     last_power_scale_ = power_.apply(scratch_rgb_);
     return driver_.show(scratch_rgb_);
 }

@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace lumos {
 namespace {
@@ -64,6 +65,10 @@ void DeviceSettings::normalize_layout() {
     if (layout.total() != led_count && layout.left < led_count) {
         layout.left = static_cast<std::uint16_t>(led_count - layout.top - layout.right - layout.bottom);
     }
+}
+
+void DeviceSettings::normalize_ignored_leds() {
+    sort_unique_indices(ignored_leds, led_count);
 }
 
 Result<void> Preferences::init() {
@@ -172,6 +177,21 @@ Result<void> Preferences::load() {
         device_.wifi_dns1 = nvs_get_str_key(handle, "wifi_dns", "");
     }
 
+    get_u16("e_skip0", device_.edge_ignore.skip_start);
+    get_u16("e_skip1", device_.edge_ignore.skip_end);
+    get_u16("e_ctr", device_.edge_ignore.corner_tr);
+    get_u16("e_cbr", device_.edge_ignore.corner_br);
+    get_u16("e_cbl", device_.edge_ignore.corner_bl);
+    get_u16("e_ctl", device_.edge_ignore.corner_tl);
+
+    size_t ign_len = 0;
+    if (nvs_get_blob(handle, "ign_leds", nullptr, &ign_len) == ESP_OK && ign_len >= sizeof(std::uint16_t) &&
+        (ign_len % sizeof(std::uint16_t)) == 0) {
+        device_.ignored_leds.assign(ign_len / sizeof(std::uint16_t), 0);
+        nvs_get_blob(handle, "ign_leds", device_.ignored_leds.data(), &ign_len);
+    }
+    device_.normalize_ignored_leds();
+
     nvs_close(handle);
     return load_plugin_blob();
 }
@@ -188,6 +208,7 @@ Result<void> Preferences::save() {
     }
 
     device_.normalize_layout();
+    device_.normalize_ignored_leds();
     nvs_set_u16(handle, "led_count", device_.led_count);
     nvs_set_i32(handle, "gpio", device_.gpio);
     nvs_set_u8(handle, "chipset", static_cast<std::uint8_t>(device_.chipset));
@@ -216,6 +237,18 @@ Result<void> Preferences::save() {
     nvs_set_str_key(handle, "wifi_mask", device_.wifi_netmask);
     nvs_set_str_key(handle, "wifi_dns1", device_.wifi_dns1);
     nvs_set_str_key(handle, "wifi_dns2", device_.wifi_dns2);
+    nvs_set_u16(handle, "e_skip0", device_.edge_ignore.skip_start);
+    nvs_set_u16(handle, "e_skip1", device_.edge_ignore.skip_end);
+    nvs_set_u16(handle, "e_ctr", device_.edge_ignore.corner_tr);
+    nvs_set_u16(handle, "e_cbr", device_.edge_ignore.corner_br);
+    nvs_set_u16(handle, "e_cbl", device_.edge_ignore.corner_bl);
+    nvs_set_u16(handle, "e_ctl", device_.edge_ignore.corner_tl);
+    if (device_.ignored_leds.empty()) {
+        nvs_erase_key(handle, "ign_leds");
+    } else {
+        nvs_set_blob(handle, "ign_leds", device_.ignored_leds.data(),
+                     device_.ignored_leds.size() * sizeof(std::uint16_t));
+    }
 
     err = nvs_commit(handle);
     nvs_close(handle);
