@@ -41,34 +41,43 @@ std::string nvs_get_str_key(nvs_handle_t handle, const char* key, const std::str
 } // namespace
 
 void DeviceSettings::normalize_layout() {
+    // Layout is ACTIVE HyperHDR side counts — must not be forced to equal physical led_count.
+    if (layout.total() > 0 && layout.total() <= led_count) {
+        return;
+    }
     if (led_count == 0) {
         layout = {};
         return;
     }
-    if (layout.total() == led_count) {
-        return;
-    }
-    // Known presets.
-    if (led_count == 140) {
+    // Prefer classic active presets when physical is at least that large.
+    if (led_count >= 140 && (layout.total() == 0 || layout.total() > led_count)) {
         layout = {.top = 44, .right = 26, .bottom = 44, .left = 26};
+        if (layout.total() <= led_count) {
+            return;
+        }
+    }
+    // Fit a 16:9-ish active layout into the span after end skips (best-effort default).
+    const LedIndex skip0 = std::min(edge_ignore.skip_start, led_count);
+    const LedIndex skip1 =
+        std::min(edge_ignore.skip_end, static_cast<std::uint16_t>(led_count - skip0));
+    LedIndex active_budget = static_cast<LedIndex>(led_count - skip0 - skip1);
+    if (active_budget == 0) {
+        layout = {};
         return;
     }
-    if (led_count == 340) {
-        layout = {.top = 144, .right = 26, .bottom = 144, .left = 26};
-        return;
-    }
-    // 16:9 perimeter ratio 16+9+16+9 = 50.
-    layout.top = static_cast<std::uint16_t>((led_count * 16 + 25) / 50);
-    layout.right = static_cast<std::uint16_t>((led_count * 9 + 25) / 50);
-    layout.bottom = static_cast<std::uint16_t>((led_count * 16 + 25) / 50);
-    const int left = static_cast<int>(led_count) - layout.top - layout.right - layout.bottom;
+    layout.top = static_cast<std::uint16_t>((active_budget * 16 + 25) / 50);
+    layout.right = static_cast<std::uint16_t>((active_budget * 9 + 25) / 50);
+    layout.bottom = static_cast<std::uint16_t>((active_budget * 16 + 25) / 50);
+    const int left = static_cast<int>(active_budget) - layout.top - layout.right - layout.bottom;
     layout.left = static_cast<std::uint16_t>(left > 0 ? left : 0);
-    if (layout.total() != led_count && layout.left < led_count) {
-        layout.left = static_cast<std::uint16_t>(led_count - layout.top - layout.right - layout.bottom);
+    if (layout.total() != active_budget && layout.left < active_budget) {
+        layout.left =
+            static_cast<std::uint16_t>(active_budget - layout.top - layout.right - layout.bottom);
     }
 }
 
 void DeviceSettings::normalize_ignored_leds() {
+    // ignored_leds are physical wire indices.
     sort_unique_indices(ignored_leds, led_count);
 }
 

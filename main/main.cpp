@@ -89,10 +89,7 @@ extern "C" void app_main() {
     };
     auto renderer = std::make_unique<lumos::Renderer>(*led_driver, renderer_cfg);
     renderer->init(device.led_count);
-    renderer->set_perimeter_map(lumos::build_perimeter_maps(
-        device.led_count, device.layout.top, device.layout.right, device.layout.bottom,
-        device.layout.left, device.perimeter_start, device.perimeter_direction));
-    renderer->set_ignored_leds(device.ignored_leds);
+    renderer->set_geometry(device.geometry());
 
     auto framebuffer = std::make_unique<lumos::Framebuffer>(device.led_count);
     auto plugins = std::make_unique<lumos::PluginManager>(*preferences, *renderer, *framebuffer);

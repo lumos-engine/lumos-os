@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lumos/core/framebuffer.hpp"
-#include "lumos/core/perimeter_map.hpp"
+#include "lumos/core/led_geometry.hpp"
 #include "lumos/core/result.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/led/iled_driver.hpp"
@@ -29,7 +29,7 @@ class Renderer {
 public:
     Renderer(ILedDriver& driver, RendererConfig config = {});
 
-    Result<void> init(LedIndex led_count);
+    Result<void> init(LedIndex physical_led_count);
     void set_brightness(Brightness b);
     Brightness brightness() const { return config_.brightness; }
     void set_gamma(float gamma);
@@ -40,28 +40,25 @@ public:
     ColorOrder color_order() const { return config_.color_order; }
     void set_white_algorithm(WhiteAlgorithm algo);
 
-    // Logical (CW from top-left) framebuffer → wire order for the driver.
-    void set_perimeter_map(PerimeterMaps maps);
-    const PerimeterMaps& perimeter_map() const { return perimeter_; }
+    void set_geometry(LedGeometry geometry);
+    const LedGeometry& geometry() const { return geometry_; }
 
-    // Calibration: force listed logical indices off at present (unless bypassed).
-    void set_ignored_leds(const std::vector<std::uint16_t>& indices);
+    // When false, skipped/ignored physical LEDs may light (calibration identify).
     void set_apply_led_ignore(bool enabled);
     bool apply_led_ignore() const { return apply_ignore_; }
-    LedIndex ignored_count() const { return ignored_count_; }
 
-    // Owns presentation: ColorProcessor → ignore → perimeter remap → power → driver.
+    // Owns presentation: ColorProcessor → physical ignore → power → driver.
+    // Framebuffer is physical wire order.
     Result<void> present(const Framebuffer& framebuffer);
 
     float last_power_scale() const { return last_power_scale_; }
     bool is_rgbw() const { return color_.is_rgbw(); }
+    LedIndex physical_led_count() const { return led_count_; }
 
 private:
     void sync_color_processor();
     void apply_ignore_to_rgb();
     void apply_ignore_to_rgbw();
-    void scatter_to_wire_rgb();
-    void scatter_to_wire_rgbw();
 
     ILedDriver& driver_;
     RendererConfig config_{};
@@ -69,13 +66,9 @@ private:
     PowerLimiter power_;
     std::vector<Rgb> scratch_rgb_;
     std::vector<Rgbw> scratch_rgbw_;
-    std::vector<Rgb> wire_rgb_;
-    std::vector<Rgbw> wire_rgbw_;
-    std::vector<std::uint8_t> ignore_mask_{};
-    PerimeterMaps perimeter_{};
+    LedGeometry geometry_{};
     bool apply_ignore_{true};
     LedIndex led_count_{0};
-    LedIndex ignored_count_{0};
     float last_power_scale_{1.0f};
 };
 

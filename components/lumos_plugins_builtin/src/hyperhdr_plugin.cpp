@@ -1,5 +1,6 @@
 #include "lumos/plugin/plugin.hpp"
 #include "lumos/plugins/ddp_transport.hpp"
+#include "lumos/renderer/renderer.hpp"
 
 #include "esp_timer.h"
 
@@ -16,19 +17,21 @@ public:
     Result<void> initialize(PluginContext& ctx) override {
         ctx_ = &ctx;
         prefs_ = ctx.preferences;
-        led_count_ = ctx.led_count;
-        transport_ = std::make_unique<DdpTransport>();
+        renderer_ = ctx.renderer;
         return Result<void>::ok();
     }
 
     Result<void> start() override {
-        led_count_ = ctx_ ? ctx_->led_count : led_count_;
-        frame_.assign(led_count_, Rgb::black());
+        active_count_ = prefs_ ? prefs_->device().active_led_count() : kDefaultLedCount;
+        if (active_count_ == 0) {
+            active_count_ = prefs_ ? prefs_->device().led_count : kDefaultLedCount;
+        }
+        frame_.assign(active_count_, Rgb::black());
         has_frame_ = false;
         last_frame_us_ = 0;
         waiting_ = true;
 
-        auto result = transport_->start(led_count_, [this](const LedFrame& f) { on_frame(f); });
+        auto result = transport_->start(active_count_, [this](const LedFrame& f) { on_frame(f); });
         if (!result) {
             return result;
         }
@@ -68,16 +71,17 @@ public:
 
     void render(Framebuffer& fb) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!has_frame_) {
-            fb.clear();
+        fb.clear();
+        if (!has_frame_ || prefs_ == nullptr) {
             return;
         }
-        const LedIndex n = std::min(fb.size(), static_cast<LedIndex>(frame_.size()));
-        for (LedIndex i = 0; i < n; ++i) {
-            fb[i] = frame_[i];
-        }
-        for (LedIndex i = n; i < fb.size(); ++i) {
-            fb[i] = Rgb::black();
+        const auto geo = prefs_->device().geometry();
+        const LedIndex n = std::min(static_cast<LedIndex>(frame_.size()), geo.active_count());
+        for (LedIndex a = 0; a < n && a < geo.active_to_physical.size(); ++a) {
+            const auto phys = geo.active_to_physical[a];
+            if (phys < fb.size()) {
+                fb[phys] = frame_[a];
+            }
         }
     }
 
@@ -88,8 +92,10 @@ private:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             frame_ = f.pixels;
-            if (frame_.size() < led_count_) {
-                frame_.resize(led_count_, Rgb::black());
+            if (frame_.size() < active_count_) {
+                frame_.resize(active_count_, Rgb::black());
+            } else if (frame_.size() > active_count_) {
+                frame_.resize(active_count_);
             }
             has_frame_ = true;
             waiting_ = false;
@@ -102,8 +108,9 @@ private:
 
     PluginContext* ctx_{nullptr};
     Preferences* prefs_{nullptr};
-    LedIndex led_count_{kDefaultLedCount};
-    std::unique_ptr<IFrameTransport> transport_;
+    Renderer* renderer_{nullptr};
+    LedIndex active_count_{kDefaultLedCount};
+    std::unique_ptr<IFrameTransport> transport_{std::make_unique<DdpTransport>()};
     std::vector<Rgb> frame_;
     std::mutex mutex_;
     bool has_frame_{false};

@@ -1,5 +1,6 @@
 #include "lumos/api/rest_api.hpp"
 #include "lumos/core/led_calibration.hpp"
+#include "lumos/core/led_geometry.hpp"
 #include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/wifi/neighbor_info.hpp"
@@ -315,7 +316,9 @@ esp_err_t RestApi::post_brightness(httpd_req_t* req) {
 
 cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON* root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "led_count", d.led_count);
+    cJSON_AddNumberToObject(root, "led_count", d.led_count); // physical
+    cJSON_AddNumberToObject(root, "physical_led_count", d.led_count);
+    cJSON_AddNumberToObject(root, "active_led_count", d.active_led_count());
     cJSON_AddNumberToObject(root, "gpio", d.gpio);
     cJSON_AddNumberToObject(root, "chipset", static_cast<int>(d.chipset));
     cJSON_AddNumberToObject(root, "color_order", static_cast<int>(d.color_order));
@@ -344,8 +347,15 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     for (std::uint16_t idx : d.ignored_leds) {
         cJSON_AddItemToArray(ignored, cJSON_CreateNumber(idx));
     }
-    cJSON_AddNumberToObject(root, "active_led_count",
-                            static_cast<int>(d.led_count) - static_cast<int>(d.ignored_leds.size()));
+    const auto geo = d.geometry();
+    cJSON_AddBoolToObject(root, "geometry_valid", geometry_counts_valid(geo));
+    cJSON* hh = cJSON_AddObjectToObject(root, "hyperhdr");
+    cJSON_AddNumberToObject(hh, "leds", geo.hyperhdr_summary().leds);
+    cJSON_AddNumberToObject(hh, "top", geo.hyperhdr_summary().top);
+    cJSON_AddNumberToObject(hh, "right", geo.hyperhdr_summary().right);
+    cJSON_AddNumberToObject(hh, "bottom", geo.hyperhdr_summary().bottom);
+    cJSON_AddNumberToObject(hh, "left", geo.hyperhdr_summary().left);
+    cJSON_AddStringToObject(hh, "order", "clockwise_top_left");
     cJSON_AddNumberToObject(root, "startup_plugin", static_cast<int>(d.startup_plugin));
     cJSON_AddNumberToObject(root, "fallback_plugin", static_cast<int>(d.fallback_plugin));
     cJSON_AddNumberToObject(root, "hyperhdr_timeout_ms", d.hyperhdr_timeout_ms);
@@ -440,6 +450,13 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
         d.white_algorithm = static_cast<WhiteAlgorithm>(std::clamp(v->valueint, 0, 0));
         renderer.set_white_algorithm(d.white_algorithm);
     }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "physical_led_count"); cJSON_IsNumber(v)) {
+        const auto next = static_cast<LedIndex>(std::clamp(v->valueint, 1, 2000));
+        if (next != d.led_count) {
+            d.led_count = next;
+            reboot_required = true;
+        }
+    }
     if (const cJSON* layout = cJSON_GetObjectItem(json, "layout"); cJSON_IsObject(layout)) {
         if (const cJSON* v = cJSON_GetObjectItem(layout, "top"); cJSON_IsNumber(v)) {
             d.layout.top = static_cast<std::uint16_t>(std::max(0, v->valueint));
@@ -453,21 +470,17 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
         if (const cJSON* v = cJSON_GetObjectItem(layout, "left"); cJSON_IsNumber(v)) {
             d.layout.left = static_cast<std::uint16_t>(std::max(0, v->valueint));
         }
-        if (d.layout.total() != d.led_count) {
+        // Active layout may be smaller than physical — do not force equality.
+        if (d.layout.total() == 0 || d.layout.total() > d.led_count) {
             d.normalize_layout();
         }
-    } else if (cJSON_GetObjectItem(json, "led_count") != nullptr && d.layout.total() != d.led_count) {
-        d.normalize_layout();
     }
 
-    bool perimeter_touched = false;
     if (const cJSON* v = cJSON_GetObjectItem(json, "perimeter_start"); cJSON_IsNumber(v)) {
         d.perimeter_start = static_cast<PerimeterStart>(std::clamp(v->valueint, 0, 3));
-        perimeter_touched = true;
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "perimeter_direction"); cJSON_IsNumber(v)) {
         d.perimeter_direction = static_cast<PerimeterDirection>(std::clamp(v->valueint, 0, 1));
-        perimeter_touched = true;
     }
 
     // Assign orientation from identify: which color (0=red..3=amber) is on each TV side.
@@ -489,15 +502,31 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
             if (const auto solved = solve_orientation_from_colors(color_on_side)) {
                 d.perimeter_start = solved->first;
                 d.perimeter_direction = solved->second;
-                perimeter_touched = true;
             }
         }
     }
 
-    if (perimeter_touched || cJSON_GetObjectItem(json, "layout") != nullptr) {
-        renderer.set_perimeter_map(build_perimeter_maps(
-            d.led_count, d.layout.top, d.layout.right, d.layout.bottom, d.layout.left,
-            d.perimeter_start, d.perimeter_direction));
+    // Wizard: set each edge from inclusive physical wire [start,end].
+    // { "edge_ranges": { "top":[a,b], "right":[c,d], ... } }
+    if (const cJSON* ranges = cJSON_GetObjectItem(json, "edge_ranges"); cJSON_IsObject(ranges)) {
+        const char* keys[4] = {"top", "right", "bottom", "left"};
+        std::uint16_t* sides[4] = {&d.layout.top, &d.layout.right, &d.layout.bottom, &d.layout.left};
+        for (int i = 0; i < 4; ++i) {
+            const cJSON* arr = cJSON_GetObjectItem(ranges, keys[i]);
+            if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) < 2) {
+                continue;
+            }
+            const cJSON* a = cJSON_GetArrayItem(arr, 0);
+            const cJSON* b = cJSON_GetArrayItem(arr, 1);
+            if (!cJSON_IsNumber(a) || !cJSON_IsNumber(b)) {
+                continue;
+            }
+            const auto a0 = static_cast<LedIndex>(std::max(0, a->valueint));
+            const auto b0 = static_cast<LedIndex>(std::max(0, b->valueint));
+            const auto start = std::min(a0, b0);
+            const auto end = std::max(a0, b0);
+            *sides[i] = static_cast<std::uint16_t>(edge_active_count(start, end, d.ignored_leds));
+        }
     }
 
     if (const cJSON* v = cJSON_GetObjectItem(json, "startup_plugin"); cJSON_IsNumber(v)) {
@@ -564,7 +593,6 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
         }
     }
 
-    bool ignore_touched = false;
     if (const cJSON* arr = cJSON_GetObjectItem(json, "ignored_leds"); cJSON_IsArray(arr)) {
         d.ignored_leds.clear();
         const int n = cJSON_GetArraySize(arr);
@@ -575,24 +603,10 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
                 d.ignored_leds.push_back(static_cast<std::uint16_t>(item->valueint));
             }
         }
-        ignore_touched = true;
     }
 
-    // Rebuild ignore list from edge params (replaces ignored_leds).
-    if (const cJSON* v = cJSON_GetObjectItem(json, "mark_edges"); cJSON_IsTrue(v)) {
-        const auto maps = build_perimeter_maps(
-            d.led_count, d.layout.top, d.layout.right, d.layout.bottom, d.layout.left,
-            d.perimeter_start, d.perimeter_direction);
-        d.ignored_leds =
-            edge_ignore_indices(d.led_count, d.layout.top, d.layout.right, d.layout.bottom,
-                                d.layout.left, d.edge_ignore, maps);
-        ignore_touched = true;
-    }
-
-    if (ignore_touched) {
-        d.normalize_ignored_leds();
-        renderer.set_ignored_leds(d.ignored_leds);
-    }
+    d.normalize_ignored_leds();
+    renderer.set_geometry(d.geometry());
 }
 
 void apply_plugin_params_json(Preferences& preferences, cJSON* plugins) {

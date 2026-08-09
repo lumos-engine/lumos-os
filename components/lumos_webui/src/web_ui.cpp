@@ -71,8 +71,8 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <button onclick="saveWifi()">Save &amp; Connect</button>
 </section>
 <section>
-<h2>Strip &amp; layout</h2>
-<label>LED count</label><input id="ledCount" type="number" min="1" max="2000"/>
+<h2>Strip</h2>
+<p class="hint" id="stripCounts">Physical LEDs: — · Active (HyperHDR): —</p>
 <label>GPIO</label><input id="gpio" type="number" min="0" max="39"/>
 <label>Chipset</label>
 <select id="chipset">
@@ -91,82 +91,86 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <option value="4">GBR</option>
   <option value="5">BGR</option>
 </select>
-<p class="hint" id="colorOrderHint">Changing this applies on the next frame (no reboot). Use Fire or a solid red Static color to judge.</p>
-<label>Layout (top / right / bottom / left) — must sum to LED count</label>
-<div class="grid4">
-  <input id="layTop" type="number" min="0" placeholder="top"/>
-  <input id="layRight" type="number" min="0" placeholder="right"/>
-  <input id="layBottom" type="number" min="0" placeholder="bottom"/>
-  <input id="layLeft" type="number" min="0" placeholder="left"/>
-</div>
-<p class="hint" id="layoutSum">Sum: —</p>
-<button onclick="saveStrip()">Save strip settings</button>
-<p class="hint">Chipset / GPIO / LED count changes reboot the device. Color order applies live.</p>
+<p class="hint" id="colorOrderHint">Color order applies live. LED counts are set in Calibration.</p>
+<button onclick="saveStrip()">Save strip hardware</button>
+<!-- hidden layout fields kept for preview geometry -->
+<input id="ledCount" type="hidden" value="140"/>
+<input id="layTop" type="hidden" value="44"/>
+<input id="layRight" type="hidden" value="26"/>
+<input id="layBottom" type="hidden" value="44"/>
+<input id="layLeft" type="hidden" value="26"/>
+<p class="hint" id="layoutSum" style="display:none"></p>
 </section>
 <section>
-<h2>Calibration · orientation &amp; edges</h2>
-<p class="hint">Logical order is always clockwise from top-left (HyperHDR should match). Tell LumosOS how your <em>wire</em> is actually stuck if that differs — e.g. inverse = counter-clockwise.</p>
-<label>Wire starts at corner</label>
-<select id="periStart">
-  <option value="0">Top-left</option>
-  <option value="1">Top-right</option>
-  <option value="2">Bottom-right</option>
-  <option value="3">Bottom-left</option>
-</select>
-<label>Wire direction</label>
-<select id="periDir">
-  <option value="0">Clockwise</option>
-  <option value="1">Counter-clockwise (inverse)</option>
-</select>
-<div class="grid2">
-  <button type="button" onclick="saveOrientation()">Save orientation</button>
-  <button class="secondary" type="button" onclick="runCalibration('sides')" style="margin-top:.75rem">Test: Red=Top …</button>
+<h2>Calibration wizard</h2>
+<p class="hint" id="wizStepLabel">Step 1 / 6 — Orientation</p>
+<div id="wiz0">
+  <p class="hint">Where does the data wire start, and which way does the strip run?</p>
+  <label>Wire starts at corner</label>
+  <select id="periStart">
+    <option value="0">Top-left</option>
+    <option value="1">Top-right</option>
+    <option value="2">Bottom-right</option>
+    <option value="3">Bottom-left</option>
+  </select>
+  <label>Wire direction</label>
+  <select id="periDir">
+    <option value="0">Clockwise</option>
+    <option value="1">Counter-clockwise (inverse)</option>
+  </select>
+  <button type="button" onclick="wizSaveOrient()">Save &amp; test sides</button>
+  <p class="hint">Legend: <span style="color:#ff5050">Red=Top</span> · <span style="color:#50ff50">Green=Right</span> · <span style="color:#5078ff">Blue=Bottom</span> · <span style="color:#ffc828">Amber=Left</span></p>
 </div>
-<p class="hint">Test legend: <span style="color:#ff5050">Red=Top</span> · <span style="color:#50ff50">Green=Right</span> · <span style="color:#5078ff">Blue=Bottom</span> · <span style="color:#ffc828">Amber=Left</span>. If inverted, set Counter-clockwise and test again.</p>
-<label>Or assign what you see (raw wire colors)</label>
-<button class="secondary" type="button" onclick="runCalibration('sides_assign')">1. Light raw side colors</button>
-<div class="grid2">
-  <div><label>Top of TV shows</label>
-    <select id="obsTop"><option value="0">Red</option><option value="1">Green</option><option value="2">Blue</option><option value="3">Amber</option></select>
+<div id="wiz1" style="display:none">
+  <p class="hint">Light the first N LEDs. Increase until the last LED on the strip lights (nothing beyond).</p>
+  <label>N (prefix)</label><input id="prefixN" type="number" min="1" max="2000" value="1"/>
+  <div class="grid4">
+    <button type="button" onclick="wizPrefixDelta(-10)">−10</button>
+    <button type="button" onclick="wizPrefixDelta(-1)">−1</button>
+    <button type="button" onclick="wizPrefixDelta(1)">+1</button>
+    <button type="button" onclick="wizPrefixDelta(10)">+10</button>
   </div>
-  <div><label>Right of TV shows</label>
-    <select id="obsRight"><option value="0">Red</option><option value="1" selected>Green</option><option value="2">Blue</option><option value="3">Amber</option></select>
+  <button type="button" onclick="wizLightPrefix()">Light first N</button>
+  <button type="button" onclick="wizSavePhysical()">Save as physical LED count</button>
+  <p class="hint">Saving a new physical count reboots the device.</p>
+</div>
+<div id="wiz2" style="display:none">
+  <p class="hint">Unused LEDs at the wire ends (always off).</p>
+  <div class="grid2">
+    <div><label>Skip start</label><input id="skipStart" type="number" min="0" max="500" value="0"/></div>
+    <div><label>Skip end</label><input id="skipEnd" type="number" min="0" max="500" value="0"/></div>
   </div>
+  <button type="button" onclick="wizSaveSkips()">Save skips &amp; preview</button>
 </div>
-<div class="grid2">
-  <div><label>Bottom of TV shows</label>
-    <select id="obsBottom"><option value="0">Red</option><option value="1">Green</option><option value="2" selected>Blue</option><option value="3">Amber</option></select>
+<div id="wiz3" style="display:none">
+  <p class="hint">Disable fold / bad LEDs in the middle. Tap preview or enter a wire index.</p>
+  <label class="check"><input id="calPick" type="checkbox" onchange="toggleCalPick()"/> Tap preview to toggle ignore</label>
+  <div class="grid2">
+    <div><label>Wire index</label><input id="midIndex" type="number" min="0" max="2000" value="0"/></div>
+    <button type="button" onclick="wizToggleMidIndex()" style="margin-top:1.5rem">Toggle index</button>
   </div>
-  <div><label>Left of TV shows</label>
-    <select id="obsLeft"><option value="0">Red</option><option value="1">Green</option><option value="2">Blue</option><option value="3" selected>Amber</option></select>
+  <button class="secondary" type="button" onclick="clearIgnores()">Clear middle ignores</button>
+  <p class="hint" id="calStatus">Ignored: 0</p>
+</div>
+<div id="wiz4" style="display:none">
+  <p class="hint" id="edgePrompt">Light the <b>start</b> of TOP (first LED on that TV edge).</p>
+  <label>Wire index</label><input id="edgeIdx" type="number" min="0" max="2000" value="0"/>
+  <div class="grid2">
+    <button type="button" onclick="wizEdgeLight()">Light this index</button>
+    <button type="button" onclick="wizEdgeConfirm()" style="margin-top:.75rem">Confirm</button>
   </div>
+  <p class="hint" id="edgeStatus">—</p>
 </div>
-<button type="button" onclick="applyOrientationFromColors()">2. Apply color → orientation</button>
-<p class="hint">Ignore LEDs at strip ends and corner folds. Ignored stay black for every plugin.</p>
-<label class="check"><input id="calPick" type="checkbox" onchange="toggleCalPick()"/> Tap preview to toggle ignore</label>
-<div class="grid2">
-  <div><label>Skip start (wire)</label><input id="skipStart" type="number" min="0" max="200" value="0"/></div>
-  <div><label>Skip end (wire)</label><input id="skipEnd" type="number" min="0" max="200" value="0"/></div>
-</div>
-<label>Corner ignores (TR / BR / BL / TL)</label>
-<div class="grid4">
-  <input id="cornerTr" type="number" min="0" max="50" value="0" title="Top→right"/>
-  <input id="cornerBr" type="number" min="0" max="50" value="0" title="Right→bottom"/>
-  <input id="cornerBl" type="number" min="0" max="50" value="0" title="Bottom→left"/>
-  <input id="cornerTl" type="number" min="0" max="50" value="0" title="Left→top"/>
+<div id="wiz5" style="display:none">
+  <h3 style="margin:.25rem 0">HyperHDR</h3>
+  <pre id="hhCard">—</pre>
+  <button type="button" onclick="wizCopyHh()">Copy summary</button>
+  <button class="secondary" type="button" onclick="runCalMode('sides')">Re-test side colors</button>
+  <button class="secondary" type="button" onclick="runCalMode('map')">Show active/ignored map</button>
 </div>
 <div class="grid2">
-  <button type="button" onclick="markEdges()">Mark edges → ignore list</button>
-  <button class="secondary" type="button" onclick="clearIgnores()" style="margin-top:.75rem">Clear all ignores</button>
-</div>
-<p class="hint" id="calStatus">Ignored: 0 · Active: —</p>
-<div class="grid2">
-  <button class="secondary" type="button" onclick="runCalibration('wire_chase')" style="margin-top:.75rem">Chase wire (find LED 0)</button>
-  <button class="secondary" type="button" onclick="runCalibration('chase')" style="margin-top:.75rem">Chase logical</button>
-</div>
-<div class="grid2">
-  <button class="secondary" type="button" onclick="runCalibration('map')" style="margin-top:.75rem">Show map (active/ignored)</button>
-  <button class="secondary" type="button" onclick="runCalibration('active')" style="margin-top:.75rem">Light active only</button>
+  <button class="secondary" type="button" id="wizBack" onclick="wizNav(-1)" style="margin-top:.75rem">Back</button>
+  <button type="button" id="wizNext" onclick="wizNav(1)" style="margin-top:.75rem">Next</button>
 </div>
 </section>
 <section>
@@ -216,8 +220,12 @@ let previewCount=0;
 let layoutSides={top:44,right:26,bottom:44,left:26};
 let pluginsCache=[];
 let ignoredSet=new Set();
-let ledPositions=[]; // {i,x,y} in canvas coords for hit-testing
+let ledPositions=[]; // {i,x,y} physical wire index
 let calPickOn=false;
+let wizStep=0;
+let edgePhase=0; // 0 start top, 1 end top, ... 7 end left
+let edgeRanges={top:[0,0],right:[0,0],bottom:[0,0],left:[0,0]};
+const wizLabels=['Orientation','Find total LEDs','Skip front / end','Middle disables','Measure edges','HyperHDR summary'];
 async function j(url,opts){const r=await fetch(url,opts); if(!r.ok) throw new Error(await r.text()); return r.json()}
 function toggleStatic(){document.getElementById('staticFields').classList.toggle('show', useStatic.checked);}
 function applyLayoutSides(sides){
@@ -225,20 +233,16 @@ function applyLayoutSides(sides){
   layBottom.value=sides.bottom; layLeft.value=sides.left;
   layoutSides=sides;
 }
-function updateLayoutSum(){
-  const s=[layTop,layRight,layBottom,layLeft].map(el=>Number(el.value)||0).reduce((a,b)=>a+b,0);
-  const want=Number(ledCount.value)||0;
-  layoutSum.textContent='Sum: '+s+(want?(' / '+want+(s===want?' ✓':' — mismatch')):'');
+function updateStripCounts(phys, active){
+  stripCounts.textContent='Physical LEDs: '+(phys??'—')+' · Active (HyperHDR): '+(active??'—');
 }
-['layTop','layRight','layBottom','layLeft'].forEach(id=>{
-  document.getElementById(id).addEventListener('input', updateLayoutSum);
-});
-ledCount.addEventListener('input',()=>{
-  const n=Number(ledCount.value)||0;
-  const s=[layTop,layRight,layBottom,layLeft].map(el=>Number(el.value)||0).reduce((a,b)=>a+b,0);
-  if(n>0 && s!==n) applyLayoutSides(sideCounts(n));
-  updateLayoutSum();
-});
+function updateLayoutSum(){}
+function physicalSideSplit(n){
+  if(n<=0) return {top:0,right:0,bottom:0,left:0};
+  const top=Math.round(n*16/50), right=Math.round(n*9/50), bottom=Math.round(n*16/50);
+  let left=n-top-right-bottom; if(left<0) left=0;
+  return {top,right,bottom,left};
+}
 function renderStatus(s){
   const view=Object.assign({},s); delete view.type;
   status.textContent=JSON.stringify(view,null,2);
@@ -255,14 +259,8 @@ function hexToBytes(hex){
   return out;
 }
 function sideCounts(n){
-  const cur={top:Number(layTop.value)||0,right:Number(layRight.value)||0,bottom:Number(layBottom.value)||0,left:Number(layLeft.value)||0};
-  if((cur.top+cur.right+cur.bottom+cur.left)===n) return cur;
-  if(layoutSides && (layoutSides.top+layoutSides.right+layoutSides.bottom+layoutSides.left)===n) return layoutSides;
-  if(n===140) return {top:44,right:26,bottom:44,left:26};
-  if(n===340) return {top:144,right:26,bottom:144,left:26};
-  const top=Math.round(n*16/50), right=Math.round(n*9/50), bottom=Math.round(n*16/50);
-  let left=n-top-right-bottom; if(left<0) left=0;
-  return {top,right,bottom,left};
+  // Preview positions follow physical wire around the frame.
+  return physicalSideSplit(n);
 }
 function drawPreview(){
   const canvas=ledPreview, ctx=canvas.getContext('2d');
@@ -275,9 +273,9 @@ function drawPreview(){
   const sides=previewCount?sideCounts(previewCount):null;
   let lit=0;
   if(ledRgb && previewCount){ for(let i=0;i<previewCount;i++){ const o=i*3; if(ledRgb[o]|ledRgb[o+1]|ledRgb[o+2]) lit++; } }
-  const active=previewCount? (previewCount-ignoredSet.size) : 0;
+  const act=layoutSides.top+layoutSides.right+layoutSides.bottom+layoutSides.left;
   ctx.fillStyle='#8b95a8'; ctx.font='14px system-ui,sans-serif'; ctx.textAlign='center';
-  ctx.fillText(previewCount?(lit+' lit / '+previewCount+' · active '+active+(sides?(' · '+sides.top+'/'+sides.right+'/'+sides.bottom+'/'+sides.left):'')):'Waiting for frames…', W/2, H/2);
+  ctx.fillText(previewCount?(lit+' lit / '+previewCount+' phys · HH '+act+' ('+layoutSides.top+'/'+layoutSides.right+'/'+layoutSides.bottom+'/'+layoutSides.left+')'):'Waiting for frames…', W/2, H/2);
   if(!previewCount || !sides) return;
   const band=12; let idx=0;
   const place=(x,y)=>{ if(idx<previewCount){ ledPositions.push({i:idx,x,y}); drawLed(ctx,x,y,band,ledRgb,idx); idx++; } };
@@ -285,7 +283,7 @@ function drawPreview(){
   for(let i=0;i<sides.right && idx<previewCount;i++){ const t=sides.right<=1?0.5:i/(sides.right-1); place(W-pad,pad+t*(H-2*pad)); }
   for(let i=0;i<sides.bottom && idx<previewCount;i++){ const t=sides.bottom<=1?0.5:i/(sides.bottom-1); place(W-pad-t*(W-2*pad),H-pad); }
   for(let i=0;i<sides.left && idx<previewCount;i++){ const t=sides.left<=1?0.5:i/(sides.left-1); place(pad,H-pad-t*(H-2*pad)); }
-  if(typeof calStatus!=='undefined') calStatus.textContent='Ignored: '+ignoredSet.size+' · Active: '+active;
+  if(typeof calStatus!=='undefined' && calStatus) calStatus.textContent='Middle ignored: '+ignoredSet.size;
 }
 function drawLed(ctx,x,y,size,rgb,idx){
   const ignored=ignoredSet.has(idx);
@@ -313,7 +311,7 @@ async function loadSettings(){
     ip.value=s.wifi_ip||''; gateway.value=s.wifi_gateway||'';
     netmask.value=s.wifi_netmask||'255.255.255.0';
     dns1.value=s.wifi_dns1||''; dns2.value=s.wifi_dns2||'';
-    if(typeof s.led_count==='number') ledCount.value=s.led_count;
+    if(typeof s.led_count==='number'){ ledCount.value=s.led_count; prefixN.value=s.led_count; }
     if(typeof s.brightness==='number') brightness.value=s.brightness;
     if(typeof s.gpio==='number') gpio.value=s.gpio;
     if(typeof s.chipset==='number') chipset.value=String(s.chipset);
@@ -326,10 +324,6 @@ async function loadSettings(){
     if(s.edge_ignore){
       skipStart.value=s.edge_ignore.skip_start||0;
       skipEnd.value=s.edge_ignore.skip_end||0;
-      cornerTr.value=s.edge_ignore.corner_tr||0;
-      cornerBr.value=s.edge_ignore.corner_br||0;
-      cornerBl.value=s.edge_ignore.corner_bl||0;
-      cornerTl.value=s.edge_ignore.corner_tl||0;
     }
     ignoredSet=new Set(Array.isArray(s.ignored_leds)?s.ignored_leds:[]);
     if(s.layout){
@@ -337,7 +331,9 @@ async function loadSettings(){
       layBottom.value=s.layout.bottom; layLeft.value=s.layout.left;
       layoutSides={top:s.layout.top,right:s.layout.right,bottom:s.layout.bottom,left:s.layout.left};
     }
-    toggleStatic(); updateLayoutSum();
+    updateStripCounts(s.physical_led_count||s.led_count, s.active_led_count||(s.layout?(s.layout.top+s.layout.right+s.layout.bottom+s.layout.left):0));
+    if(s.hyperhdr) updateHhCard(s.hyperhdr, s.geometry_valid);
+    toggleStatic();
   }catch{}
 }
 function renderPluginParams(){
@@ -446,22 +442,16 @@ async function applyColorOrderLive(){
 }
 async function saveStrip(){
   const body={
-    led_count:Number(ledCount.value),
     gpio:Number(gpio.value),
     chipset:Number(chipset.value),
-    color_order:Number(colorOrder.value),
-    layout:{top:Number(layTop.value)||0,right:Number(layRight.value)||0,bottom:Number(layBottom.value)||0,left:Number(layLeft.value)||0}
+    color_order:Number(colorOrder.value)
   };
-  if(body.layout.top+body.layout.right+body.layout.bottom+body.layout.left !== body.led_count){
-    alert('Layout sides must sum to LED count'); return;
-  }
   try{
     const r=await fetch('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const t=await r.text();
-    layoutSides=body.layout;
     if(t.indexOf('"reboot":true')>=0){ alert('Saved — rebooting… refresh shortly'); return; }
     if(!r.ok) throw new Error(t);
-    alert('Strip settings saved');
+    alert('Strip hardware saved');
   }catch(e){ alert('Save failed: '+e.message); }
 }
 async function applyLighting(){
@@ -484,78 +474,126 @@ function toggleCalPick(){
   calPickOn=!!calPick.checked;
   ledPreview.parentElement.classList.toggle('cal-on', calPickOn);
   previewHint.textContent=calPickOn
-    ? 'Pick mode on — tap an LED to ignore (amber ring) or restore. Saved immediately.'
-    : 'Clockwise from top-left. Enable calibration pick mode below to tap LEDs to ignore/restore.';
+    ? 'Pick mode — tap a LED (physical wire index) to ignore/restore.'
+    : 'Clockwise preview of the physical strip. Use Calibration wizard for counts.';
 }
 async function persistIgnores(){
   const list=[...ignoredSet].sort((a,b)=>a-b);
   await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({ignored_leds:list})});
-  calStatus.textContent='Ignored: '+list.length+' · Active: '+(previewCount-list.length)+' · saved';
+  if(calStatus) calStatus.textContent='Middle ignored: '+list.length+' · saved';
   drawPreview();
-}
-async function saveOrientation(){
-  try{
-    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      perimeter_start:Number(periStart.value),
-      perimeter_direction:Number(periDir.value)
-    })});
-    await runCalibration('sides');
-    calStatus.textContent='Orientation saved · testing Red=Top / Green=Right / Blue=Bottom / Amber=Left';
-  }catch(e){ alert('Save orientation failed: '+e.message); }
-}
-async function applyOrientationFromColors(){
-  const body={
-    orientation_from_colors:{
-      top:Number(obsTop.value),
-      right:Number(obsRight.value),
-      bottom:Number(obsBottom.value),
-      left:Number(obsLeft.value)
-    }
-  };
-  try{
-    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    await loadSettings();
-    await runCalibration('sides');
-    const names=['Top-left','Top-right','Bottom-right','Bottom-left'];
-    const dirs=['Clockwise','Counter-clockwise'];
-    calStatus.textContent='Solved: start '+names[Number(periStart.value)]+' · '+dirs[Number(periDir.value)]+' · verify colors';
-  }catch(e){ alert('Could not solve orientation — check each color is used once, or set start/direction manually. '+e.message); }
-}
-async function markEdges(){
-  const body={
-    edge_ignore:{
-      skip_start:Number(skipStart.value)||0,
-      skip_end:Number(skipEnd.value)||0,
-      corner_tr:Number(cornerTr.value)||0,
-      corner_br:Number(cornerBr.value)||0,
-      corner_bl:Number(cornerBl.value)||0,
-      corner_tl:Number(cornerTl.value)||0
-    },
-    mark_edges:true
-  };
-  try{
-    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    await loadSettings(); drawPreview();
-    await j('/api/v1/plugin/calibration',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({mode:'map'})});
-    calStatus.textContent='Edges marked · Ignored: '+ignoredSet.size+' · showing map';
-  }catch(e){ alert('Mark edges failed: '+e.message); }
 }
 async function clearIgnores(){
   ignoredSet=new Set();
+  try{ await persistIgnores(); }catch(e){ alert(e.message); }
+}
+async function runCalMode(mode, extra){
+  const body=Object.assign({mode:mode}, extra||{});
+  await j('/api/v1/plugin/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  plugin.value='calibration';
+}
+function updateHhCard(hh, valid){
+  let text='LED count: '+hh.leds+'\nTop: '+hh.top+'\nRight: '+hh.right+'\nBottom: '+hh.bottom+'\nLeft: '+hh.left+'\nOrder: '+(hh.order||'clockwise_top_left');
+  if(typeof valid==='boolean') text+='\nGeometry: '+(valid?'valid':'check skips / edges / ignores');
+  hhCard.textContent=text;
+}
+function showWiz(){
+  for(let i=0;i<6;i++){ const el=document.getElementById('wiz'+i); if(el) el.style.display=i===wizStep?'block':'none'; }
+  wizStepLabel.textContent='Step '+(wizStep+1)+' / 6 — '+wizLabels[wizStep];
+  wizBack.disabled=wizStep===0;
+  wizNext.textContent=wizStep===5?'Done':'Next';
+  if(wizStep===3){ calPick.checked=true; toggleCalPick(); }
+  if(wizStep===4) updateEdgePrompt();
+  if(wizStep===5) loadSettings();
+}
+function wizNav(d){
+  if(wizStep===5 && d>0) return;
+  wizStep=Math.max(0,Math.min(5,wizStep+d));
+  showWiz();
+}
+async function wizSaveOrient(){
   try{
-    await persistIgnores();
-    alert('Cleared ignore list');
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      perimeter_start:Number(periStart.value), perimeter_direction:Number(periDir.value)})});
+    await runCalMode('sides');
   }catch(e){ alert(e.message); }
 }
-async function runCalibration(mode){
+async function wizPrefixDelta(d){
+  prefixN.value=Math.max(1, (Number(prefixN.value)||1)+d);
+  await wizLightPrefix();
+}
+async function wizLightPrefix(){
+  try{ await runCalMode('prefix',{prefix_n:Number(prefixN.value)||1}); }
+  catch(e){ alert(e.message); }
+}
+async function wizSavePhysical(){
   try{
-    await j('/api/v1/plugin/calibration',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({mode:mode,speed:0.35})});
-    plugin.value='calibration'; renderPluginParams();
-    calStatus.textContent='Calibration mode: '+mode;
+    const n=Number(prefixN.value)||1;
+    const r=await fetch('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({physical_led_count:n,led_count:n})});
+    const t=await r.text();
+    if(t.indexOf('"reboot":true')>=0){ alert('Physical count '+n+' saved — rebooting…'); return; }
+    if(!r.ok) throw new Error(t);
+    ledCount.value=n; updateStripCounts(n, layoutSides.top+layoutSides.right+layoutSides.bottom+layoutSides.left);
+    alert('Physical count saved: '+n);
   }catch(e){ alert(e.message); }
+}
+async function wizSaveSkips(){
+  try{
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      edge_ignore:{skip_start:Number(skipStart.value)||0, skip_end:Number(skipEnd.value)||0,
+        corner_tr:0,corner_br:0,corner_bl:0,corner_tl:0}})});
+    await runCalMode('skips');
+  }catch(e){ alert(e.message); }
+}
+async function wizToggleMidIndex(){
+  try{
+    const i=Number(midIndex.value)||0;
+    if(ignoredSet.has(i)) ignoredSet.delete(i); else ignoredSet.add(i);
+    await persistIgnores();
+    await runCalMode('index',{index:i});
+  }catch(e){ alert(e.message); }
+}
+function updateEdgePrompt(){
+  const sides=['TOP','RIGHT','BOTTOM','LEFT'];
+  const side=sides[Math.floor(edgePhase/2)];
+  const which=(edgePhase%2===0)?'start':'end';
+  edgePrompt.innerHTML='Light the <b>'+which+'</b> of '+side+' (wire index).';
+  edgeStatus.textContent='Measuring '+side+' · '+(edgePhase%2===0?'start':'end')+' · phase '+(edgePhase+1)+'/8';
+}
+async function wizEdgeLight(){
+  try{
+    const i=Number(edgeIdx.value)||0;
+    const sides=['top','right','bottom','left'];
+    const s=sides[Math.floor(edgePhase/2)];
+    if(edgePhase%2===0){ edgeRanges[s][0]=i; edgeRanges[s][1]=i; }
+    else { edgeRanges[s][1]=i; }
+    if(edgePhase%2===0){
+      await runCalMode('index',{index:i});
+    } else {
+      await runCalMode('edge_range',{range_start:edgeRanges[s][0], range_end:edgeRanges[s][1], index:i});
+    }
+  }catch(e){ alert(e.message); }
+}
+async function wizEdgeConfirm(){
+  try{
+    await wizEdgeLight();
+    edgePhase++;
+    if(edgePhase>=8){
+      await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({edge_ranges:edgeRanges})});
+      await loadSettings();
+      edgePhase=0;
+      wizStep=5; showWiz();
+      alert('Edges saved — see HyperHDR summary');
+      return;
+    }
+    updateEdgePrompt();
+  }catch(e){ alert(e.message); }
+}
+async function wizCopyHh(){
+  try{ await navigator.clipboard.writeText(hhCard.textContent); alert('Copied'); }catch{ alert(hhCard.textContent); }
 }
 ledPreview.addEventListener('click', async (ev)=>{
   if(!calPickOn || !ledPositions.length) return;
@@ -569,8 +607,9 @@ ledPreview.addEventListener('click', async (ev)=>{
   }
   if(!best) return;
   if(ignoredSet.has(best.i)) ignoredSet.delete(best.i); else ignoredSet.add(best.i);
+  midIndex.value=best.i;
   drawPreview();
-  try{ await persistIgnores(); }catch(e){ calStatus.textContent='Save failed: '+e.message; }
+  try{ await persistIgnores(); }catch(e){ if(calStatus) calStatus.textContent='Save failed: '+e.message; }
 });
 async function downloadConfig(){
   cfgStatus.textContent='Building config…';
@@ -637,6 +676,7 @@ async function loadNeighbors(){
   }catch(e){ neighbors.textContent='Neighbors unavailable: '+e.message; }
 }
 function onWsMessage(m){ if(m.type==='state') renderStatus(m); }
+showWiz();
 loadSettings(); refresh(); scanWifi(); drawPreview();
 loadNeighbors();
 pollLeds(); setInterval(pollLeds,150); setInterval(refresh,5000);

@@ -2,6 +2,7 @@
 
 #include "lumos/core/color.hpp"
 #include "lumos/core/led_calibration.hpp"
+#include "lumos/core/led_geometry.hpp"
 #include "lumos/core/mode_map.hpp"
 #include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/result.hpp"
@@ -26,6 +27,7 @@ struct LedLayout {
 };
 
 struct DeviceSettings {
+    // Physical wire length (driver / framebuffer size). NVS key remains "led_count".
     LedIndex led_count{kDefaultLedCount};
     int gpio{kDefaultLedGpio};
     Chipset chipset{Chipset::Ws2815};
@@ -37,13 +39,13 @@ struct DeviceSettings {
     std::uint8_t balance_b{kDefaultChannelBalance};
     std::uint16_t power_limit_ma{kDefaultPowerLimitMa};
     WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
+    // Active LEDs per TV edge (HyperHDR). Sum is active_led_count, not physical.
     LedLayout layout{};
     // Wire orientation relative to logical CW-from-top-left order (HyperHDR / UI).
     PerimeterStart perimeter_start{PerimeterStart::TopLeft};
     PerimeterDirection perimeter_direction{PerimeterDirection::Clockwise};
-    // Logical indices that stay off (ends, corner folds, dead pixels).
+    // Physical wire indices that stay off (middle disables). Ends use edge_ignore skips.
     std::vector<std::uint16_t> ignored_leds{};
-    // Last edge-mark params (UI convenience; mask source of truth is ignored_leds).
     EdgeIgnoreParams edge_ignore{};
     StartupPluginMode startup_plugin{StartupPluginMode::HyperHdr};
     FallbackPluginMode fallback_plugin{FallbackPluginMode::Bias};
@@ -61,7 +63,16 @@ struct DeviceSettings {
     std::string wifi_dns1;     // primary DNS; defaults to gateway if empty
     std::string wifi_dns2;     // secondary DNS; optional
 
-    // Ensure layout sides sum to led_count (16:9-ish distribution if mismatched).
+    LedIndex active_led_count() const { return layout.total(); }
+    LedIndex physical_led_count() const { return led_count; }
+
+    LedGeometry geometry() const {
+        return build_led_geometry(
+            led_count, LedLayoutCounts{layout.top, layout.right, layout.bottom, layout.left},
+            edge_ignore, ignored_leds, perimeter_start, perimeter_direction);
+    }
+
+    // If layout is empty/invalid, seed a 16:9-ish active layout that fits under physical.
     void normalize_layout();
     void normalize_ignored_leds();
 };

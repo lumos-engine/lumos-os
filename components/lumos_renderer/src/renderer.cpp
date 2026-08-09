@@ -1,5 +1,4 @@
 #include "lumos/renderer/renderer.hpp"
-#include "lumos/core/led_calibration.hpp"
 
 namespace lumos {
 
@@ -31,49 +30,19 @@ void Renderer::sync_color_processor() {
     });
 }
 
-Result<void> Renderer::init(LedIndex led_count) {
-    led_count_ = led_count;
-    scratch_rgb_.assign(led_count, Rgb::black());
-    scratch_rgbw_.assign(led_count, Rgbw::black());
-    wire_rgb_.assign(led_count, Rgb::black());
-    wire_rgbw_.assign(led_count, Rgbw::black());
-    ignore_mask_.assign((led_count + 7) / 8, 0);
-    ignored_count_ = 0;
-    perimeter_.logical_to_physical.resize(led_count);
-    perimeter_.physical_to_logical.resize(led_count);
-    for (LedIndex i = 0; i < led_count; ++i) {
-        perimeter_.logical_to_physical[i] = i;
-        perimeter_.physical_to_logical[i] = i;
-    }
-    perimeter_.identity = true;
+Result<void> Renderer::init(LedIndex physical_led_count) {
+    led_count_ = physical_led_count;
+    scratch_rgb_.assign(physical_led_count, Rgb::black());
+    scratch_rgbw_.assign(physical_led_count, Rgbw::black());
+    geometry_ = build_led_geometry(physical_led_count, {.top = physical_led_count}, {}, {},
+                                   PerimeterStart::TopLeft, PerimeterDirection::Clockwise);
     sync_color_processor();
     driver_.set_color_order(config_.color_order);
     return Result<void>::ok();
 }
 
-void Renderer::set_perimeter_map(PerimeterMaps maps) {
-    if (maps.logical_to_physical.size() != led_count_ ||
-        maps.physical_to_logical.size() != led_count_) {
-        perimeter_.logical_to_physical.resize(led_count_);
-        perimeter_.physical_to_logical.resize(led_count_);
-        for (LedIndex i = 0; i < led_count_; ++i) {
-            perimeter_.logical_to_physical[i] = i;
-            perimeter_.physical_to_logical[i] = i;
-        }
-        perimeter_.identity = true;
-        return;
-    }
-    perimeter_ = std::move(maps);
-}
-
-void Renderer::set_ignored_leds(const std::vector<std::uint16_t>& indices) {
-    ignore_mask_ = ignore_mask_from_indices(led_count_, indices);
-    ignored_count_ = 0;
-    for (LedIndex i = 0; i < led_count_; ++i) {
-        if (ignore_mask_test(ignore_mask_, i)) {
-            ++ignored_count_;
-        }
-    }
+void Renderer::set_geometry(LedGeometry geometry) {
+    geometry_ = std::move(geometry);
 }
 
 void Renderer::set_apply_led_ignore(bool enabled) {
@@ -81,51 +50,23 @@ void Renderer::set_apply_led_ignore(bool enabled) {
 }
 
 void Renderer::apply_ignore_to_rgb() {
-    if (!apply_ignore_ || ignored_count_ == 0) {
+    if (!apply_ignore_ || geometry_.physical_ignore_mask.empty()) {
         return;
     }
     for (LedIndex i = 0; i < scratch_rgb_.size(); ++i) {
-        if (ignore_mask_test(ignore_mask_, i)) {
+        if (geometry_.is_physical_ignored(i)) {
             scratch_rgb_[i] = Rgb::black();
         }
     }
 }
 
 void Renderer::apply_ignore_to_rgbw() {
-    if (!apply_ignore_ || ignored_count_ == 0) {
+    if (!apply_ignore_ || geometry_.physical_ignore_mask.empty()) {
         return;
     }
     for (LedIndex i = 0; i < scratch_rgbw_.size(); ++i) {
-        if (ignore_mask_test(ignore_mask_, i)) {
+        if (geometry_.is_physical_ignored(i)) {
             scratch_rgbw_[i] = Rgbw::black();
-        }
-    }
-}
-
-void Renderer::scatter_to_wire_rgb() {
-    if (perimeter_.identity) {
-        wire_rgb_ = scratch_rgb_;
-        return;
-    }
-    wire_rgb_.assign(led_count_, Rgb::black());
-    for (LedIndex logical = 0; logical < led_count_; ++logical) {
-        const auto phys = perimeter_.logical_to_physical[logical];
-        if (phys < led_count_) {
-            wire_rgb_[phys] = scratch_rgb_[logical];
-        }
-    }
-}
-
-void Renderer::scatter_to_wire_rgbw() {
-    if (perimeter_.identity) {
-        wire_rgbw_ = scratch_rgbw_;
-        return;
-    }
-    wire_rgbw_.assign(led_count_, Rgbw::black());
-    for (LedIndex logical = 0; logical < led_count_; ++logical) {
-        const auto phys = perimeter_.logical_to_physical[logical];
-        if (phys < led_count_) {
-            wire_rgbw_[phys] = scratch_rgbw_[logical];
         }
     }
 }
@@ -173,15 +114,13 @@ Result<void> Renderer::present(const Framebuffer& framebuffer) {
     if (color_.is_rgbw()) {
         color_.process_rgbw(view, scratch_rgbw_);
         apply_ignore_to_rgbw();
-        scatter_to_wire_rgbw();
-        last_power_scale_ = power_.apply(wire_rgbw_);
-        return driver_.show_rgbw(wire_rgbw_);
+        last_power_scale_ = power_.apply(scratch_rgbw_);
+        return driver_.show_rgbw(scratch_rgbw_);
     }
     color_.process_rgb(view, scratch_rgb_);
     apply_ignore_to_rgb();
-    scatter_to_wire_rgb();
-    last_power_scale_ = power_.apply(wire_rgb_);
-    return driver_.show(wire_rgb_);
+    last_power_scale_ = power_.apply(scratch_rgb_);
+    return driver_.show(scratch_rgb_);
 }
 
 } // namespace lumos
