@@ -512,9 +512,14 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
 
     // Wizard: set each edge from inclusive physical wire [start,end].
     // { "edge_ranges": { "top":[a,b], "right":[c,d], ... } }
+    // Measured ranges are authoritative active LEDs: count = end-start+1, and any
+    // middle-ignores inside a confirmed edge are cleared (identify can light ignored
+    // LEDs, which previously produced "count shrunk + sides missing endpoints").
     if (const cJSON* ranges = cJSON_GetObjectItem(json, "edge_ranges"); cJSON_IsObject(ranges)) {
         const char* keys[4] = {"top", "right", "bottom", "left"};
         std::uint16_t* sides[4] = {&d.layout.top, &d.layout.right, &d.layout.bottom, &d.layout.left};
+        std::array<std::pair<LedIndex, LedIndex>, 4> measured{};
+        int measured_n = 0;
         for (int i = 0; i < 4; ++i) {
             const cJSON* arr = cJSON_GetObjectItem(ranges, keys[i]);
             if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) < 2) {
@@ -529,7 +534,31 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
             const auto b0 = static_cast<LedIndex>(std::max(0, b->valueint));
             const auto start = std::min(a0, b0);
             const auto end = std::max(a0, b0);
-            *sides[i] = static_cast<std::uint16_t>(edge_active_count(start, end, d.ignored_leds));
+            if (end < start || end - start + 1 > 2000) {
+                continue;
+            }
+            *sides[i] = static_cast<std::uint16_t>(end - start + 1);
+            if (measured_n < 4) {
+                measured[static_cast<std::size_t>(measured_n++)] = {start, end};
+            }
+        }
+        if (measured_n > 0 && !d.ignored_leds.empty()) {
+            std::vector<std::uint16_t> kept;
+            kept.reserve(d.ignored_leds.size());
+            for (std::uint16_t idx : d.ignored_leds) {
+                bool in_edge = false;
+                for (int i = 0; i < measured_n; ++i) {
+                    if (idx >= measured[static_cast<std::size_t>(i)].first &&
+                        idx <= measured[static_cast<std::size_t>(i)].second) {
+                        in_edge = true;
+                        break;
+                    }
+                }
+                if (!in_edge) {
+                    kept.push_back(idx);
+                }
+            }
+            d.ignored_leds = std::move(kept);
         }
     }
 

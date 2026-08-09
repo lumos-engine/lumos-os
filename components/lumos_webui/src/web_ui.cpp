@@ -143,7 +143,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <button type="button" onclick="wizSaveSkips()">Save skips &amp; preview</button>
 </div>
 <div id="wiz3" style="display:none">
-  <p class="hint">Disable fold / bad LEDs in the middle. Tap preview or enter a wire index.</p>
+  <p class="hint">Disable LEDs that must stay off and are <b>not</b> part of any TV edge (true folds / dead pixels). Do not mark corner LEDs you will include when measuring edges — edge measure clears ignores inside each confirmed range.</p>
   <label class="check"><input id="calPick" type="checkbox" onchange="toggleCalPick()"/> Tap preview to toggle ignore</label>
   <div class="grid2">
     <div><label>Wire index</label><input id="midIndex" type="number" min="0" max="2000" value="0"/></div>
@@ -496,6 +496,7 @@ async function runCalMode(mode, extra){
 function updateHhCard(hh, valid){
   let text='LED count: '+hh.leds+'\nTop: '+hh.top+'\nRight: '+hh.right+'\nBottom: '+hh.bottom+'\nLeft: '+hh.left+'\nOrder: '+(hh.order||'clockwise_top_left');
   if(typeof valid==='boolean') text+='\nGeometry: '+(valid?'valid':'check skips / edges / ignores');
+  text+='\nMiddle ignores: '+ignoredSet.size;
   hhCard.textContent=text;
 }
 function showWiz(){
