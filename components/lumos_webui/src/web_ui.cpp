@@ -178,6 +178,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <label>Plugin</label><select id="plugin" onchange="renderPluginParams()"></select>
 <div id="pluginParams"></div>
 <label>Brightness (0–255)</label><input id="brightness" type="number" min="0" max="255"/>
+<p class="hint" id="lightingHint">Apply to set plugin/brightness. HyperHDR cannot override while a non‑HyperHDR plugin is active.</p>
 <label>Channel balance R / G / B (255 = unity)</label>
 <div class="grid4">
   <input id="balR" type="number" min="0" max="255" value="255" title="Red gain"/>
@@ -221,6 +222,7 @@ let layoutSides={top:44,right:26,bottom:44,left:26};
 let activeToPhysical=[]; // logical CW-from-TL → physical wire index
 let geometryValid=false;
 let pluginsCache=[];
+let pluginDirty=false; // user changed dropdown; don't let 5s refresh snap it back
 let ignoredSet=new Set();
 let ledPositions=[]; // {i,x,y} physical wire index
 let calPickOn=false;
@@ -424,15 +426,19 @@ async function refreshPlugins(){
   const p=await j('/api/v1/plugins');
   pluginsCache=p.plugins||[];
   const sel=plugin; const current=sel.value;
+  // Prefer the user's in-progress choice over active, so HyperHDR/status polls don't
+  // yank the dropdown back before Apply.
+  const prefer=pluginDirty?current:(p.active||current);
   sel.innerHTML='';
   for(const plug of pluginsCache){
     const o=document.createElement('option');
     o.value=plug.id; o.textContent=plug.name+(plug.capabilities&&plug.capabilities.category?(' · '+plug.capabilities.category):'');
-    if(plug.id===p.active || plug.id===current) o.selected=true;
+    if(plug.id===prefer) o.selected=true;
     sel.appendChild(o);
   }
   renderPluginParams();
 }
+plugin.addEventListener('change',()=>{ pluginDirty=true; });
 async function refresh(){
   try{
     if(!wsLive){ renderStatus(await j('/api/v1/status')); }
@@ -510,14 +516,22 @@ async function saveStrip(){
   }catch(e){ alert('Save failed: '+e.message); }
 }
 async function applyLighting(){
-  await j('/api/v1/brightness',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({brightness:Number(brightness.value)})});
-  const params={};
-  for(const el of pluginParams.querySelectorAll('[data-param-id]')){
-    params[el.dataset.paramId]=el.type==='number'?Number(el.value):el.value;
-  }
-  await j('/api/v1/plugin/'+plugin.value,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
-  refresh();
+  try{
+    await j('/api/v1/brightness',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({brightness:Number(brightness.value)})});
+    const params={};
+    for(const el of pluginParams.querySelectorAll('[data-param-id]')){
+      params[el.dataset.paramId]=el.type==='number'?Number(el.value):el.value;
+    }
+    await j('/api/v1/plugin/'+plugin.value,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
+    pluginDirty=false;
+    if(lightingHint){
+      lightingHint.textContent=plugin.value==='hyperhdr'
+        ? 'HyperHDR active — stream can take over lighting.'
+        : 'Local control on — HyperHDR WLED pushes will not steal plugin/brightness. Select HyperHDR + Apply to hand back.';
+    }
+    refresh();
+  }catch(e){ alert('Apply failed: '+e.message); }
 }
 async function uploadOta(){
   const f=firmware.files[0]; if(!f){alert('Choose a .bin');return;}

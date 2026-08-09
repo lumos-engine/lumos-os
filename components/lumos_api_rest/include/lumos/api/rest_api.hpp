@@ -49,6 +49,9 @@ private:
     httpd_handle_t server_{nullptr};
     bool wled_on_{true};
     bool wled_live_{false};
+    // When true, LumosOS UI/API owns plugin+brightness; HyperHDR /json/state cannot steal them.
+    // Cleared when the user explicitly activates the hyperhdr plugin.
+    bool local_override_{false};
 };
 
 } // namespace lumos

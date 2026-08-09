@@ -292,6 +292,8 @@ esp_err_t RestApi::post_plugin(httpd_req_t* req) {
     if (!result) {
         return send_json(req, "{\"error\":\"activate failed\"}", 400);
     }
+    // UI/API plugin changes win over HyperHDR WLED state pushes — unless choosing HyperHDR.
+    self->local_override_ = (std::strcmp(id, "hyperhdr") != 0 && std::strcmp(id, "calibration") != 0);
     return send_json(req, "{\"ok\":true}");
 }
 
@@ -314,6 +316,10 @@ esp_err_t RestApi::post_brightness(httpd_req_t* req) {
     self->preferences_.device().brightness = value;
     self->renderer_.set_brightness(value);
     self->preferences_.save();
+    // Keep HyperHDR from immediately restoring bri via /json/state.
+    if (self->plugins_.active_id() != "hyperhdr") {
+        self->local_override_ = true;
+    }
     cJSON_Delete(json);
     return send_json(req, "{\"ok\":true}");
 }
@@ -822,6 +828,7 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "version", kAppVersion.data());
     cJSON_AddStringToObject(root, "active_plugin", self->plugins_.active_id().c_str());
     cJSON_AddBoolToObject(root, "in_fallback", self->plugins_.in_fallback());
+    cJSON_AddBoolToObject(root, "local_override", self->local_override_);
     cJSON_AddNumberToObject(root, "brightness", self->renderer_.brightness());
     cJSON_AddNumberToObject(root, "color_order", static_cast<int>(self->renderer_.color_order()));
     cJSON_AddNumberToObject(root, "power_scale", self->renderer_.last_power_scale());
@@ -896,7 +903,9 @@ esp_err_t RestApi::get_wled_json(httpd_req_t* req) {
 }
 
 esp_err_t RestApi::put_wled_state(httpd_req_t* req) {
-    // Accept Hyperk powerOn/powerOff: PUT /json/state {"on":true,"live":true,"bri":255}
+    // HyperHDR/Hyperk: PUT /json/state {"on":true,"live":true,"bri":255}
+    // bri is intentionally ignored — Hyperk repeatedly pushes bri:255 and was
+    // overwriting LumosOS brightness (and NVS) whenever ambilight was configured.
     auto* self = from_req(req);
     std::string body;
     if (read_body(req, body) != ESP_OK) {
@@ -908,16 +917,19 @@ esp_err_t RestApi::put_wled_state(httpd_req_t* req) {
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "on"); cJSON_IsBool(v)) {
         self->wled_on_ = cJSON_IsTrue(v);
+        if (!self->wled_on_ && !self->local_override_) {
+            (void)self->plugins_.activate("off");
+        }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "live"); cJSON_IsBool(v)) {
-        self->wled_live_ = cJSON_IsTrue(v);
+        const bool live = cJSON_IsTrue(v);
+        self->wled_live_ = live;
+        if (live && !self->local_override_) {
+            // Enter realtime / DDP path only when the user hasn't taken local control.
+            (void)self->plugins_.activate("hyperhdr");
+        }
     }
-    if (const cJSON* v = cJSON_GetObjectItem(json, "bri"); cJSON_IsNumber(v)) {
-        auto& d = self->preferences_.device();
-        d.brightness = static_cast<Brightness>(std::clamp(v->valueint, 0, 255));
-        self->renderer_.set_brightness(d.brightness);
-        self->preferences_.save();
-    }
+    // Ignore "bri" from WLED clients (see comment above).
     cJSON_Delete(json);
 
     cJSON* root =
