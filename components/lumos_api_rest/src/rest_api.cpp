@@ -1,5 +1,6 @@
 #include "lumos/api/rest_api.hpp"
 #include "lumos/core/led_calibration.hpp"
+#include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/wifi/neighbor_info.hpp"
 
@@ -11,6 +12,7 @@
 #include "freertos/task.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -329,6 +331,8 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON_AddNumberToObject(layout, "right", d.layout.right);
     cJSON_AddNumberToObject(layout, "bottom", d.layout.bottom);
     cJSON_AddNumberToObject(layout, "left", d.layout.left);
+    cJSON_AddNumberToObject(root, "perimeter_start", static_cast<int>(d.perimeter_start));
+    cJSON_AddNumberToObject(root, "perimeter_direction", static_cast<int>(d.perimeter_direction));
     cJSON* edge = cJSON_AddObjectToObject(root, "edge_ignore");
     cJSON_AddNumberToObject(edge, "skip_start", d.edge_ignore.skip_start);
     cJSON_AddNumberToObject(edge, "skip_end", d.edge_ignore.skip_end);
@@ -455,6 +459,47 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
     } else if (cJSON_GetObjectItem(json, "led_count") != nullptr && d.layout.total() != d.led_count) {
         d.normalize_layout();
     }
+
+    bool perimeter_touched = false;
+    if (const cJSON* v = cJSON_GetObjectItem(json, "perimeter_start"); cJSON_IsNumber(v)) {
+        d.perimeter_start = static_cast<PerimeterStart>(std::clamp(v->valueint, 0, 3));
+        perimeter_touched = true;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(json, "perimeter_direction"); cJSON_IsNumber(v)) {
+        d.perimeter_direction = static_cast<PerimeterDirection>(std::clamp(v->valueint, 0, 1));
+        perimeter_touched = true;
+    }
+
+    // Assign orientation from identify: which color (0=red..3=amber) is on each TV side.
+    if (const cJSON* obs = cJSON_GetObjectItem(json, "orientation_from_colors");
+        cJSON_IsObject(obs)) {
+        std::array<std::uint8_t, 4> color_on_side{};
+        const char* keys[4] = {"top", "right", "bottom", "left"};
+        bool ok = true;
+        for (int i = 0; i < 4; ++i) {
+            const cJSON* v = cJSON_GetObjectItem(obs, keys[i]);
+            if (!cJSON_IsNumber(v) || v->valueint < 0 || v->valueint > 3) {
+                ok = false;
+                break;
+            }
+            color_on_side[static_cast<std::size_t>(i)] =
+                static_cast<std::uint8_t>(v->valueint);
+        }
+        if (ok) {
+            if (const auto solved = solve_orientation_from_colors(color_on_side)) {
+                d.perimeter_start = solved->first;
+                d.perimeter_direction = solved->second;
+                perimeter_touched = true;
+            }
+        }
+    }
+
+    if (perimeter_touched || cJSON_GetObjectItem(json, "layout") != nullptr) {
+        renderer.set_perimeter_map(build_perimeter_maps(
+            d.led_count, d.layout.top, d.layout.right, d.layout.bottom, d.layout.left,
+            d.perimeter_start, d.perimeter_direction));
+    }
+
     if (const cJSON* v = cJSON_GetObjectItem(json, "startup_plugin"); cJSON_IsNumber(v)) {
         d.startup_plugin = static_cast<StartupPluginMode>(v->valueint);
     }
@@ -535,8 +580,12 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
 
     // Rebuild ignore list from edge params (replaces ignored_leds).
     if (const cJSON* v = cJSON_GetObjectItem(json, "mark_edges"); cJSON_IsTrue(v)) {
-        d.ignored_leds = edge_ignore_indices(d.led_count, d.layout.top, d.layout.right,
-                                             d.layout.bottom, d.layout.left, d.edge_ignore);
+        const auto maps = build_perimeter_maps(
+            d.led_count, d.layout.top, d.layout.right, d.layout.bottom, d.layout.left,
+            d.perimeter_start, d.perimeter_direction);
+        d.ignored_leds =
+            edge_ignore_indices(d.led_count, d.layout.top, d.layout.right, d.layout.bottom,
+                                d.layout.left, d.edge_ignore, maps);
         ignore_touched = true;
     }
 

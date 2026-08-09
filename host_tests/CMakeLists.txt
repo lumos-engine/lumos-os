@@ -51,3 +51,7 @@ add_test(NAME test_matter_map COMMAND test_matter_map)
 add_executable(test_led_calibration test_led_calibration.cpp)
 target_link_libraries(test_led_calibration PRIVATE lumos_host_logic)
 add_test(NAME test_led_calibration COMMAND test_led_calibration)
+
+add_executable(test_perimeter_map test_perimeter_map.cpp)
+target_link_libraries(test_perimeter_map PRIVATE lumos_host_logic)
+add_test(NAME test_perimeter_map COMMAND test_perimeter_map)

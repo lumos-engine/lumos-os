@@ -35,17 +35,39 @@ Result<void> Renderer::init(LedIndex led_count) {
     led_count_ = led_count;
     scratch_rgb_.assign(led_count, Rgb::black());
     scratch_rgbw_.assign(led_count, Rgbw::black());
+    wire_rgb_.assign(led_count, Rgb::black());
+    wire_rgbw_.assign(led_count, Rgbw::black());
     ignore_mask_.assign((led_count + 7) / 8, 0);
     ignored_count_ = 0;
+    perimeter_.logical_to_physical.resize(led_count);
+    perimeter_.physical_to_logical.resize(led_count);
+    for (LedIndex i = 0; i < led_count; ++i) {
+        perimeter_.logical_to_physical[i] = i;
+        perimeter_.physical_to_logical[i] = i;
+    }
+    perimeter_.identity = true;
     sync_color_processor();
     driver_.set_color_order(config_.color_order);
     return Result<void>::ok();
 }
 
+void Renderer::set_perimeter_map(PerimeterMaps maps) {
+    if (maps.logical_to_physical.size() != led_count_ ||
+        maps.physical_to_logical.size() != led_count_) {
+        perimeter_.logical_to_physical.resize(led_count_);
+        perimeter_.physical_to_logical.resize(led_count_);
+        for (LedIndex i = 0; i < led_count_; ++i) {
+            perimeter_.logical_to_physical[i] = i;
+            perimeter_.physical_to_logical[i] = i;
+        }
+        perimeter_.identity = true;
+        return;
+    }
+    perimeter_ = std::move(maps);
+}
+
 void Renderer::set_ignored_leds(const std::vector<std::uint16_t>& indices) {
     ignore_mask_ = ignore_mask_from_indices(led_count_, indices);
-    ignored_count_ = static_cast<LedIndex>(indices.size());
-    // Re-count after clamp inside mask builder.
     ignored_count_ = 0;
     for (LedIndex i = 0; i < led_count_; ++i) {
         if (ignore_mask_test(ignore_mask_, i)) {
@@ -80,6 +102,34 @@ void Renderer::apply_ignore_to_rgbw() {
     }
 }
 
+void Renderer::scatter_to_wire_rgb() {
+    if (perimeter_.identity) {
+        wire_rgb_ = scratch_rgb_;
+        return;
+    }
+    wire_rgb_.assign(led_count_, Rgb::black());
+    for (LedIndex logical = 0; logical < led_count_; ++logical) {
+        const auto phys = perimeter_.logical_to_physical[logical];
+        if (phys < led_count_) {
+            wire_rgb_[phys] = scratch_rgb_[logical];
+        }
+    }
+}
+
+void Renderer::scatter_to_wire_rgbw() {
+    if (perimeter_.identity) {
+        wire_rgbw_ = scratch_rgbw_;
+        return;
+    }
+    wire_rgbw_.assign(led_count_, Rgbw::black());
+    for (LedIndex logical = 0; logical < led_count_; ++logical) {
+        const auto phys = perimeter_.logical_to_physical[logical];
+        if (phys < led_count_) {
+            wire_rgbw_[phys] = scratch_rgbw_[logical];
+        }
+    }
+}
+
 void Renderer::set_brightness(Brightness b) {
     config_.brightness = b;
     sync_color_processor();
@@ -110,7 +160,6 @@ void Renderer::set_chipset(Chipset chipset) {
 void Renderer::set_color_order(ColorOrder order) {
     config_.color_order = order;
     sync_color_processor();
-    // Wire swizzle is applied in the driver from logical RGB.
     driver_.set_color_order(order);
 }
 
@@ -124,13 +173,15 @@ Result<void> Renderer::present(const Framebuffer& framebuffer) {
     if (color_.is_rgbw()) {
         color_.process_rgbw(view, scratch_rgbw_);
         apply_ignore_to_rgbw();
-        last_power_scale_ = power_.apply(scratch_rgbw_);
-        return driver_.show_rgbw(scratch_rgbw_);
+        scatter_to_wire_rgbw();
+        last_power_scale_ = power_.apply(wire_rgbw_);
+        return driver_.show_rgbw(wire_rgbw_);
     }
     color_.process_rgb(view, scratch_rgb_);
     apply_ignore_to_rgb();
-    last_power_scale_ = power_.apply(scratch_rgb_);
-    return driver_.show(scratch_rgb_);
+    scatter_to_wire_rgb();
+    last_power_scale_ = power_.apply(wire_rgb_);
+    return driver_.show(wire_rgb_);
 }
 
 } // namespace lumos

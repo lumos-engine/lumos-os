@@ -3,6 +3,7 @@
 #include <nvs.h>
 #include <nvs_flash.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -140,6 +141,13 @@ Result<void> Preferences::load() {
     get_u16("lay_bottom", device_.layout.bottom);
     get_u16("lay_left", device_.layout.left);
     device_.normalize_layout();
+    std::uint8_t pstart = static_cast<std::uint8_t>(device_.perimeter_start);
+    get_u8("peri_start", pstart);
+    device_.perimeter_start = static_cast<PerimeterStart>(std::min<std::uint8_t>(pstart, 3));
+    std::uint8_t pdir = static_cast<std::uint8_t>(device_.perimeter_direction);
+    get_u8("peri_dir", pdir);
+    device_.perimeter_direction =
+        static_cast<PerimeterDirection>(std::min<std::uint8_t>(pdir, 1));
     get_u8("brightness", device_.brightness);
     get_u8("bal_r", device_.balance_r);
     get_u8("bal_g", device_.balance_g);
@@ -218,6 +226,8 @@ Result<void> Preferences::save() {
     nvs_set_u16(handle, "lay_right", device_.layout.right);
     nvs_set_u16(handle, "lay_bottom", device_.layout.bottom);
     nvs_set_u16(handle, "lay_left", device_.layout.left);
+    nvs_set_u8(handle, "peri_start", static_cast<std::uint8_t>(device_.perimeter_start));
+    nvs_set_u8(handle, "peri_dir", static_cast<std::uint8_t>(device_.perimeter_direction));
     nvs_set_u8(handle, "brightness", device_.brightness);
     nvs_set_u8(handle, "bal_r", device_.balance_r);
     nvs_set_u8(handle, "bal_g", device_.balance_g);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/types.hpp"
 
 #include <algorithm>
@@ -27,10 +28,12 @@ inline void sort_unique_indices(std::vector<std::uint16_t>& indices, LedIndex le
     indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
 }
 
-// Build ignore indices from perimeter side lengths + edge params.
+// Build ignore indices in logical space. skip_start/end are along the wire (physical);
+// corner_* are logical TV-side ends (folds).
 inline std::vector<std::uint16_t> edge_ignore_indices(LedIndex led_count, std::uint16_t top,
                                                       std::uint16_t right, std::uint16_t bottom,
-                                                      std::uint16_t left, const EdgeIgnoreParams& e) {
+                                                      std::uint16_t left, const EdgeIgnoreParams& e,
+                                                      const PerimeterMaps& maps = {}) {
     std::vector<std::uint16_t> out;
     const std::uint32_t sum =
         static_cast<std::uint32_t>(top) + right + bottom + left;
@@ -38,28 +41,39 @@ inline std::vector<std::uint16_t> edge_ignore_indices(LedIndex led_count, std::u
         return out;
     }
 
-    const auto push_range = [&](int begin, int end) {
-        begin = std::max(0, begin);
-        end = std::min(static_cast<int>(led_count), end);
-        for (int i = begin; i < end; ++i) {
-            out.push_back(static_cast<std::uint16_t>(i));
+    const auto push_logical = [&](std::uint16_t logical) {
+        if (logical < led_count) {
+            out.push_back(logical);
         }
     };
 
-    push_range(0, static_cast<int>(e.skip_start));
-    push_range(static_cast<int>(led_count) - static_cast<int>(e.skip_end),
-               static_cast<int>(led_count));
+    const bool have_maps = maps.physical_to_logical.size() == led_count;
+    for (std::uint16_t w = 0; w < e.skip_start && w < led_count; ++w) {
+        push_logical(have_maps ? maps.physical_to_logical[w] : w);
+    }
+    for (std::uint16_t k = 0; k < e.skip_end && k < led_count; ++k) {
+        const std::uint16_t w = static_cast<std::uint16_t>(led_count - 1 - k);
+        push_logical(have_maps ? maps.physical_to_logical[w] : w);
+    }
 
     const int right0 = top;
     const int bottom0 = top + right;
     const int left0 = top + right + bottom;
 
-    // Ignore the last N LEDs of each side (corner folds sit at side ends).
-    push_range(right0 - static_cast<int>(e.corner_tr), right0);
-    push_range(bottom0 - static_cast<int>(e.corner_br), bottom0);
-    push_range(left0 - static_cast<int>(e.corner_bl), left0);
-    push_range(static_cast<int>(led_count) - static_cast<int>(e.corner_tl),
-               static_cast<int>(led_count));
+    const auto push_range_logical = [&](int begin, int end) {
+        begin = std::max(0, begin);
+        end = std::min(static_cast<int>(led_count), end);
+        for (int i = begin; i < end; ++i) {
+            push_logical(static_cast<std::uint16_t>(i));
+        }
+    };
+
+    // Ignore the last N LEDs of each logical side (corner folds).
+    push_range_logical(right0 - static_cast<int>(e.corner_tr), right0);
+    push_range_logical(bottom0 - static_cast<int>(e.corner_br), bottom0);
+    push_range_logical(left0 - static_cast<int>(e.corner_bl), left0);
+    push_range_logical(static_cast<int>(led_count) - static_cast<int>(e.corner_tl),
+                       static_cast<int>(led_count));
 
     sort_unique_indices(out, led_count);
     return out;

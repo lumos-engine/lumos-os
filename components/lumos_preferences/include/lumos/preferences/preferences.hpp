@@ -3,6 +3,7 @@
 #include "lumos/core/color.hpp"
 #include "lumos/core/led_calibration.hpp"
 #include "lumos/core/mode_map.hpp"
+#include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/result.hpp"
 #include "lumos/core/types.hpp"
 
@@ -37,7 +38,10 @@ struct DeviceSettings {
     std::uint16_t power_limit_ma{kDefaultPowerLimitMa};
     WhiteAlgorithm white_algorithm{WhiteAlgorithm::ExtractMin};
     LedLayout layout{};
-    // Physical indices that stay off (ends, corner folds, dead pixels).
+    // Wire orientation relative to logical CW-from-top-left order (HyperHDR / UI).
+    PerimeterStart perimeter_start{PerimeterStart::TopLeft};
+    PerimeterDirection perimeter_direction{PerimeterDirection::Clockwise};
+    // Logical indices that stay off (ends, corner folds, dead pixels).
     std::vector<std::uint16_t> ignored_leds{};
     // Last edge-mark params (UI convenience; mask source of truth is ignored_leds).
     EdgeIgnoreParams edge_ignore{};

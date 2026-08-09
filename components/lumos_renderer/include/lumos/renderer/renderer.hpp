@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lumos/core/framebuffer.hpp"
+#include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/result.hpp"
 #include "lumos/core/types.hpp"
 #include "lumos/led/iled_driver.hpp"
@@ -39,13 +40,17 @@ public:
     ColorOrder color_order() const { return config_.color_order; }
     void set_white_algorithm(WhiteAlgorithm algo);
 
-    // Calibration: force listed physical indices off at present (unless bypassed).
+    // Logical (CW from top-left) framebuffer → wire order for the driver.
+    void set_perimeter_map(PerimeterMaps maps);
+    const PerimeterMaps& perimeter_map() const { return perimeter_; }
+
+    // Calibration: force listed logical indices off at present (unless bypassed).
     void set_ignored_leds(const std::vector<std::uint16_t>& indices);
     void set_apply_led_ignore(bool enabled);
     bool apply_led_ignore() const { return apply_ignore_; }
     LedIndex ignored_count() const { return ignored_count_; }
 
-    // Owns presentation: ColorProcessor → power → driver.
+    // Owns presentation: ColorProcessor → ignore → perimeter remap → power → driver.
     Result<void> present(const Framebuffer& framebuffer);
 
     float last_power_scale() const { return last_power_scale_; }
@@ -55,6 +60,8 @@ private:
     void sync_color_processor();
     void apply_ignore_to_rgb();
     void apply_ignore_to_rgbw();
+    void scatter_to_wire_rgb();
+    void scatter_to_wire_rgbw();
 
     ILedDriver& driver_;
     RendererConfig config_{};
@@ -62,7 +69,10 @@ private:
     PowerLimiter power_;
     std::vector<Rgb> scratch_rgb_;
     std::vector<Rgbw> scratch_rgbw_;
+    std::vector<Rgb> wire_rgb_;
+    std::vector<Rgbw> wire_rgbw_;
     std::vector<std::uint8_t> ignore_mask_{};
+    PerimeterMaps perimeter_{};
     bool apply_ignore_{true};
     LedIndex led_count_{0};
     LedIndex ignored_count_{0};

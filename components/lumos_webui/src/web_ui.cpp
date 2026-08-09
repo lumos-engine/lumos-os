@@ -104,12 +104,49 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <p class="hint">Chipset / GPIO / LED count changes reboot the device. Color order applies live.</p>
 </section>
 <section>
-<h2>Calibration · edges</h2>
-<p class="hint">Ignore LEDs at strip ends and corner folds. Ignored LEDs stay black for every plugin (HyperHDR included).</p>
+<h2>Calibration · orientation &amp; edges</h2>
+<p class="hint">Logical order is always clockwise from top-left (HyperHDR should match). Tell LumosOS how your <em>wire</em> is actually stuck if that differs — e.g. inverse = counter-clockwise.</p>
+<label>Wire starts at corner</label>
+<select id="periStart">
+  <option value="0">Top-left</option>
+  <option value="1">Top-right</option>
+  <option value="2">Bottom-right</option>
+  <option value="3">Bottom-left</option>
+</select>
+<label>Wire direction</label>
+<select id="periDir">
+  <option value="0">Clockwise</option>
+  <option value="1">Counter-clockwise (inverse)</option>
+</select>
+<div class="grid2">
+  <button type="button" onclick="saveOrientation()">Save orientation</button>
+  <button class="secondary" type="button" onclick="runCalibration('sides')" style="margin-top:.75rem">Test: Red=Top …</button>
+</div>
+<p class="hint">Test legend: <span style="color:#ff5050">Red=Top</span> · <span style="color:#50ff50">Green=Right</span> · <span style="color:#5078ff">Blue=Bottom</span> · <span style="color:#ffc828">Amber=Left</span>. If inverted, set Counter-clockwise and test again.</p>
+<label>Or assign what you see (raw wire colors)</label>
+<button class="secondary" type="button" onclick="runCalibration('sides_assign')">1. Light raw side colors</button>
+<div class="grid2">
+  <div><label>Top of TV shows</label>
+    <select id="obsTop"><option value="0">Red</option><option value="1">Green</option><option value="2">Blue</option><option value="3">Amber</option></select>
+  </div>
+  <div><label>Right of TV shows</label>
+    <select id="obsRight"><option value="0">Red</option><option value="1" selected>Green</option><option value="2">Blue</option><option value="3">Amber</option></select>
+  </div>
+</div>
+<div class="grid2">
+  <div><label>Bottom of TV shows</label>
+    <select id="obsBottom"><option value="0">Red</option><option value="1">Green</option><option value="2" selected>Blue</option><option value="3">Amber</option></select>
+  </div>
+  <div><label>Left of TV shows</label>
+    <select id="obsLeft"><option value="0">Red</option><option value="1">Green</option><option value="2">Blue</option><option value="3" selected>Amber</option></select>
+  </div>
+</div>
+<button type="button" onclick="applyOrientationFromColors()">2. Apply color → orientation</button>
+<p class="hint">Ignore LEDs at strip ends and corner folds. Ignored stay black for every plugin.</p>
 <label class="check"><input id="calPick" type="checkbox" onchange="toggleCalPick()"/> Tap preview to toggle ignore</label>
 <div class="grid2">
-  <div><label>Skip start</label><input id="skipStart" type="number" min="0" max="200" value="0"/></div>
-  <div><label>Skip end</label><input id="skipEnd" type="number" min="0" max="200" value="0"/></div>
+  <div><label>Skip start (wire)</label><input id="skipStart" type="number" min="0" max="200" value="0"/></div>
+  <div><label>Skip end (wire)</label><input id="skipEnd" type="number" min="0" max="200" value="0"/></div>
 </div>
 <label>Corner ignores (TR / BR / BL / TL)</label>
 <div class="grid4">
@@ -124,8 +161,8 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </div>
 <p class="hint" id="calStatus">Ignored: 0 · Active: —</p>
 <div class="grid2">
-  <button class="secondary" type="button" onclick="runCalibration('sides')" style="margin-top:.75rem">Identify sides</button>
-  <button class="secondary" type="button" onclick="runCalibration('chase')" style="margin-top:.75rem">Chase all LEDs</button>
+  <button class="secondary" type="button" onclick="runCalibration('wire_chase')" style="margin-top:.75rem">Chase wire (find LED 0)</button>
+  <button class="secondary" type="button" onclick="runCalibration('chase')" style="margin-top:.75rem">Chase logical</button>
 </div>
 <div class="grid2">
   <button class="secondary" type="button" onclick="runCalibration('map')" style="margin-top:.75rem">Show map (active/ignored)</button>
@@ -284,6 +321,8 @@ async function loadSettings(){
     if(typeof s.balance_r==='number') balR.value=s.balance_r;
     if(typeof s.balance_g==='number') balG.value=s.balance_g;
     if(typeof s.balance_b==='number') balB.value=s.balance_b;
+    if(typeof s.perimeter_start==='number') periStart.value=String(s.perimeter_start);
+    if(typeof s.perimeter_direction==='number') periDir.value=String(s.perimeter_direction);
     if(s.edge_ignore){
       skipStart.value=s.edge_ignore.skip_start||0;
       skipEnd.value=s.edge_ignore.skip_end||0;
@@ -454,6 +493,34 @@ async function persistIgnores(){
     body:JSON.stringify({ignored_leds:list})});
   calStatus.textContent='Ignored: '+list.length+' · Active: '+(previewCount-list.length)+' · saved';
   drawPreview();
+}
+async function saveOrientation(){
+  try{
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      perimeter_start:Number(periStart.value),
+      perimeter_direction:Number(periDir.value)
+    })});
+    await runCalibration('sides');
+    calStatus.textContent='Orientation saved · testing Red=Top / Green=Right / Blue=Bottom / Amber=Left';
+  }catch(e){ alert('Save orientation failed: '+e.message); }
+}
+async function applyOrientationFromColors(){
+  const body={
+    orientation_from_colors:{
+      top:Number(obsTop.value),
+      right:Number(obsRight.value),
+      bottom:Number(obsBottom.value),
+      left:Number(obsLeft.value)
+    }
+  };
+  try{
+    await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    await loadSettings();
+    await runCalibration('sides');
+    const names=['Top-left','Top-right','Bottom-right','Bottom-left'];
+    const dirs=['Clockwise','Counter-clockwise'];
+    calStatus.textContent='Solved: start '+names[Number(periStart.value)]+' · '+dirs[Number(periDir.value)]+' · verify colors';
+  }catch(e){ alert('Could not solve orientation — check each color is used once, or set start/direction manually. '+e.message); }
 }
 async function markEdges(){
   const body={
