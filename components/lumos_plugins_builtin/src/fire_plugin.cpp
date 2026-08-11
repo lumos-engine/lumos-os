@@ -58,22 +58,26 @@ private:
     static constexpr float kStepSec = 1.0f / 33.0f;
 
     static Rgb heat_to_color(std::uint8_t t) {
-        // Ember → orange → amber → yellow. First band keeps green so it never sits on pure red.
-        if (t < 64) {
-            return {static_cast<std::uint8_t>((t * 255) / 64),
-                    static_cast<std::uint8_t>((t * 90) / 64), 0};
+        // Mostly orange body, yellow only in the hottest tips (not crimson, not all-yellow).
+        if (t == 0) {
+            return {0, 0, 0};
         }
-        if (t < 128) {
-            const int u = t - 64;
-            return {255, static_cast<std::uint8_t>(90 + (u * 100) / 64), 0};
+        if (t < 90) {
+            // Ember → orange.
+            const int u = (t * 255) / 90;
+            return {static_cast<std::uint8_t>(80 + (u * 175) / 255),
+                    static_cast<std::uint8_t>(35 + (u * 110) / 255), 0};
         }
-        if (t < 192) {
-            const int u = t - 128;
-            return {255, static_cast<std::uint8_t>(190 + (u * 65) / 64),
-                    static_cast<std::uint8_t>((u * 45) / 64)};
+        if (t < 175) {
+            // Orange → amber (hold green back so it stays orange longer).
+            const int u = ((t - 90) * 255) / 85;
+            return {255, static_cast<std::uint8_t>(145 + (u * 85) / 255),
+                    static_cast<std::uint8_t>(4 + (u * 36) / 255)};
         }
-        const int u = t - 192;
-        return {255, 255, static_cast<std::uint8_t>(45 + (u * 160) / 63)};
+        // Hot tip: amber → yellow.
+        const int u = ((t - 175) * 255) / 80;
+        return {255, static_cast<std::uint8_t>(230 + (u * 25) / 255),
+                static_cast<std::uint8_t>(40 + (u * 140) / 255)};
     }
 
     void step_fire() {
