@@ -125,7 +125,8 @@ void WsApi::broadcast_state() {
 void WsApi::broadcast_task(void* arg) {
     auto* self = static_cast<WsApi*>(arg);
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        // Was 1s — Wi‑Fi TX every second glitched WS281x/RMT (white flashes on dark LEDs).
+        vTaskDelay(pdMS_TO_TICKS(5000));
         self->broadcast_state();
     }
 }

@@ -40,8 +40,9 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <main>
 <section>
 <h2>Live preview</h2>
+<label class="check"><input id="livePreview" type="checkbox" onchange="toggleLivePreview()"/> Enable live preview (uses Wi‑Fi; can flicker LEDs)</label>
 <div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
-<p class="hint" id="previewHint">TV view: only active HyperHDR LEDs (top/right/bottom/left). Skips stay off the ring.</p>
+<p class="hint" id="previewHint">Off by default. TV view shows active HyperHDR LEDs only.</p>
 </section>
 <section>
 <h2>Status</h2>
@@ -727,7 +728,18 @@ async function uploadConfig(ev){
     alert('Config applied');
   }catch(e){ cfgStatus.textContent='Upload failed: '+e.message; alert('Upload failed: '+e.message); }
 }
+let livePreviewOn=false;
+let pollTimer=null;
+function toggleLivePreview(){
+  livePreviewOn=!!livePreview.checked;
+  previewHint.textContent=livePreviewOn
+    ? 'Live preview on — polling LEDs (may add flicker). Turn off for clean output.'
+    : 'Off by default. TV view shows active HyperHDR LEDs only.';
+  if(livePreviewOn){ pollLeds(); if(!pollTimer) pollTimer=setInterval(pollLeds,2000); }
+  else if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+}
 async function pollLeds(){
+  if(!livePreviewOn || document.hidden) return;
   try{
     const m=await j('/api/v1/leds');
     if(m && m.rgb_hex){ previewCount=m.count||0; ledRgb=hexToBytes(m.rgb_hex); drawPreview(); }
@@ -753,12 +765,8 @@ function onWsMessage(m){ if(m.type==='state') renderStatus(m); }
 showWiz();
 loadSettings(); refresh(); scanWifi(); drawPreview();
 neighbors.textContent='Click Refresh to scan for nearby LumosOS devices.';
-pollLeds(); setInterval(pollLeds,300); setInterval(refresh,5000);
-try{
-  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
-  ws.onopen=()=>{wsLive=true}; ws.onclose=()=>{wsLive=false}; ws.onerror=()=>{wsLive=false};
-  ws.onmessage=e=>{try{onWsMessage(JSON.parse(e.data));}catch{}};
-}catch{}
+// No auto LED poll / WebSocket — both caused RMT flicker via Wi‑Fi. Status uses HTTP refresh.
+setInterval(refresh,15000);
 </script>
 </body>
 </html>

@@ -42,12 +42,13 @@ void render_loop(void* arg) {
     auto* plugins = static_cast<lumos::PluginManager*>(arg);
     TickType_t last_wake = xTaskGetTickCount();
     TickType_t prev = last_wake;
-    constexpr TickType_t kPeriod = pdMS_TO_TICKS(16); // ~60 FPS
+    // ~20 FPS render tick; static frames skip RMT in PluginManager::present().
+    constexpr TickType_t kPeriod = pdMS_TO_TICKS(50);
     while (true) {
         const TickType_t now = xTaskGetTickCount();
         const float dt = static_cast<float>(now - prev) * portTICK_PERIOD_MS / 1000.0f;
         prev = now;
-        plugins->tick(dt > 0.0f ? dt : 0.016f);
+        plugins->tick(dt > 0.0f ? dt : 0.05f);
         plugins->present();
         vTaskDelayUntil(&last_wake, kPeriod);
     }

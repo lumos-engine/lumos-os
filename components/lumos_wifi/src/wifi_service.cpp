@@ -229,6 +229,8 @@ Result<void> WifiService::connect_sta(const std::string& ssid, const std::string
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
+    // Modem-sleep PS pulses the radio on a ~beacon cadence and glitches RMT LED timing.
+    esp_wifi_set_ps(WIFI_PS_NONE);
     esp_wifi_connect();
 
     status_.mode = WifiMode::Station;
@@ -258,6 +260,7 @@ Result<void> WifiService::start_ap(const std::string& ssid) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
     esp_netif_ip_info_t ip_info{};
     esp_netif_get_ip_info(static_cast<esp_netif_t*>(ap_netif_), &ip_info);

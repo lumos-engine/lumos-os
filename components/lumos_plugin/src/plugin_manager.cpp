@@ -2,6 +2,8 @@
 
 #include "lumos/core/logger.hpp"
 
+#include <cstring>
+
 namespace lumos {
 namespace {
 Logger log{"plugin_mgr"};
@@ -72,6 +74,8 @@ Result<void> PluginManager::activate(const std::string& plugin_id) {
         preferences_.save();
     }
 
+    last_presented_.clear();
+    unchanged_presents_ = 0;
     log.info("Activated plugin: %s", plugin_id.c_str());
     return Result<void>::ok();
 }
@@ -99,6 +103,20 @@ void PluginManager::tick(float delta_time_seconds) {
 }
 
 Result<void> PluginManager::present() {
+    const auto& cur = framebuffer_.data();
+    const bool same = last_presented_.size() == cur.size() &&
+                      (cur.empty() || std::memcmp(last_presented_.data(), cur.data(),
+                                                  cur.size() * sizeof(Rgb)) == 0);
+    if (same) {
+        // Hold the strip; only re-latch occasionally so a rare glitch can clear.
+        if (++unchanged_presents_ < 90) { // ~3s at 30 FPS
+            return Result<void>::ok();
+        }
+        unchanged_presents_ = 0;
+    } else {
+        unchanged_presents_ = 0;
+        last_presented_ = cur;
+    }
     return renderer_.present(framebuffer_);
 }
 

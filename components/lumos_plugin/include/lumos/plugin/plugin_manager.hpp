@@ -45,6 +45,10 @@ private:
     std::string active_id_;
     bool in_fallback_{false};
     PluginContext context_{};
+    // Skip RMT refresh when the frame is unchanged (static plugins). Wi‑Fi IRQs during
+    // every show() are the usual cause of white flashes on dark LEDs.
+    std::vector<Rgb> last_presented_;
+    int unchanged_presents_{0};
 };
 
 } // namespace lumos
