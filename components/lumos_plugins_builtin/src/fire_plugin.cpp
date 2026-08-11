@@ -58,27 +58,22 @@ private:
     static constexpr float kStepSec = 1.0f / 33.0f;
 
     static Rgb heat_to_color(std::uint8_t t) {
-        // Bias mid-heats into orange/amber — classic black→red spends too long pure-red.
-        // 0–48: dim ember (brown-red with a little green)
-        // 48–120: flame body (orange)
-        // 120–190: bright amber → yellow
-        // 190–255: hot core (yellow → warm white)
-        if (t < 48) {
-            const int u = (t * 255) / 48;
-            return {static_cast<std::uint8_t>((u * 200) / 255),
-                    static_cast<std::uint8_t>((u * 35) / 255), 0};
+        // Ember → orange → amber → yellow. First band keeps green so it never sits on pure red.
+        if (t < 64) {
+            return {static_cast<std::uint8_t>((t * 255) / 64),
+                    static_cast<std::uint8_t>((t * 90) / 64), 0};
         }
-        if (t < 120) {
-            const int u = ((t - 48) * 255) / 72;
-            return {255, static_cast<std::uint8_t>(35 + (u * 110) / 255), 0};
+        if (t < 128) {
+            const int u = t - 64;
+            return {255, static_cast<std::uint8_t>(90 + (u * 100) / 64), 0};
         }
-        if (t < 190) {
-            const int u = ((t - 120) * 255) / 70;
-            return {255, static_cast<std::uint8_t>(145 + (u * 110) / 255),
-                    static_cast<std::uint8_t>((u * 50) / 255)};
+        if (t < 192) {
+            const int u = t - 128;
+            return {255, static_cast<std::uint8_t>(190 + (u * 65) / 64),
+                    static_cast<std::uint8_t>((u * 45) / 64)};
         }
-        const int u = ((t - 190) * 255) / 65;
-        return {255, 255, static_cast<std::uint8_t>(50 + (u * 160) / 255)};
+        const int u = t - 192;
+        return {255, 255, static_cast<std::uint8_t>(45 + (u * 160) / 63)};
     }
 
     void step_fire() {
