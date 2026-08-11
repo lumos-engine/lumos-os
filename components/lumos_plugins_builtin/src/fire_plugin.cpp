@@ -58,14 +58,27 @@ private:
     static constexpr float kStepSec = 1.0f / 33.0f;
 
     static Rgb heat_to_color(std::uint8_t t) {
-        // Black → red → orange → yellow (not white).
-        if (t < 85) {
-            return {static_cast<std::uint8_t>(t * 3), 0, 0};
+        // Bias mid-heats into orange/amber — classic black→red spends too long pure-red.
+        // 0–48: dim ember (brown-red with a little green)
+        // 48–120: flame body (orange)
+        // 120–190: bright amber → yellow
+        // 190–255: hot core (yellow → warm white)
+        if (t < 48) {
+            const int u = (t * 255) / 48;
+            return {static_cast<std::uint8_t>((u * 200) / 255),
+                    static_cast<std::uint8_t>((u * 35) / 255), 0};
         }
-        if (t < 170) {
-            return {255, static_cast<std::uint8_t>((t - 85) * 3), 0};
+        if (t < 120) {
+            const int u = ((t - 48) * 255) / 72;
+            return {255, static_cast<std::uint8_t>(35 + (u * 110) / 255), 0};
         }
-        return {255, 255, static_cast<std::uint8_t>((t - 170))}; // soft yellow, not full white
+        if (t < 190) {
+            const int u = ((t - 120) * 255) / 70;
+            return {255, static_cast<std::uint8_t>(145 + (u * 110) / 255),
+                    static_cast<std::uint8_t>((u * 50) / 255)};
+        }
+        const int u = ((t - 190) * 255) / 65;
+        return {255, 255, static_cast<std::uint8_t>(50 + (u * 160) / 255)};
     }
 
     void step_fire() {
@@ -110,13 +123,13 @@ private:
         if (!prefs_) {
             return;
         }
-        cooling_ = std::clamp(std::atoi(prefs_->get_plugin_param("fire", "cooling", "55").c_str()),
+        cooling_ = std::clamp(std::atoi(prefs_->get_plugin_param("fire", "cooling", "48").c_str()),
                               20, 100);
         sparking_ =
-            std::clamp(std::atoi(prefs_->get_plugin_param("fire", "sparking", "120").c_str()), 20,
+            std::clamp(std::atoi(prefs_->get_plugin_param("fire", "sparking", "145").c_str()), 20,
                        200);
         intensity_ = std::clamp(
-            std::atoi(prefs_->get_plugin_param("fire", "intensity", "90").c_str()), 0, 100);
+            std::atoi(prefs_->get_plugin_param("fire", "intensity", "100").c_str()), 0, 100);
     }
 
     Preferences* prefs_{nullptr};
@@ -136,25 +149,25 @@ private:
                 {.id = "cooling",
                  .name = "Cooling",
                  .type = ParamType::Int,
-                 .default_value = "55",
+                 .default_value = "48",
                  .min_value = "20",
                  .max_value = "100",
-                 .description = "How quickly flames cool (higher = shorter flickers)",
+                 .description = "How quickly flames cool (higher = shorter / redder)",
                  .group = "look",
                  .step = "1"},
                 {.id = "sparking",
                  .name = "Sparking",
                  .type = ParamType::Int,
-                 .default_value = "120",
+                 .default_value = "145",
                  .min_value = "20",
                  .max_value = "200",
-                 .description = "Spark probability (out of 255), not sparks per frame",
+                 .description = "Spark probability (out of 255); higher = more yellow cores",
                  .group = "motion",
                  .step = "1"},
                 {.id = "intensity",
                  .name = "Intensity",
                  .type = ParamType::Int,
-                 .default_value = "90",
+                 .default_value = "100",
                  .min_value = "0",
                  .max_value = "100",
                  .group = "look",
