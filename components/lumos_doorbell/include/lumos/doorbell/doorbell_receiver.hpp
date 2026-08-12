@@ -15,7 +15,7 @@ struct DoorbellStatus {
     bool enabled{false};
     bool espnow_ready{false};
     bool paired{false};
-    int relay_pin{17};
+    int relay_pin{kDefaultRelayGpio};
     bool active_high{true};
     std::uint16_t press_ms{400};
     std::string paired_tx_mac;

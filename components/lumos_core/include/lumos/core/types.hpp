@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lumos/core/board_pins.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -30,7 +32,7 @@ enum class ColorOrder : std::uint8_t {
 
 // Default matches a common 16:9 perimeter: top/bottom 44, left/right 26.
 inline constexpr LedIndex kDefaultLedCount = 140;
-inline constexpr int kDefaultLedGpio = 16;
+// kDefaultLedGpio / kDefaultRelayGpio live in board_pins.hpp (per IDF target).
 inline constexpr Brightness kDefaultBrightness = 128;
 inline constexpr float kDefaultGamma = 2.2f;
 // Per-channel gain 0–255 (255 = unity). Green often needs ~140–180 on SK6812 RGBW.

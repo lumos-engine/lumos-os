@@ -1,6 +1,10 @@
 build/
+build-esp32/
+build-esp32s3/
 sdkconfig
 sdkconfig.old
+sdkconfig.esp32
+sdkconfig.esp32s3
 dependencies.lock
 managed_components/
 .vscode/.browse.c_cpp.db*

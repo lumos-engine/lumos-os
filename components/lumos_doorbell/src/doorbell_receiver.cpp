@@ -1,5 +1,6 @@
 #include "lumos/doorbell/doorbell_receiver.hpp"
 #include "lumos/doorbell/doorbell_packet.hpp"
+#include "lumos/core/board_pins.hpp"
 #include "lumos/core/logger.hpp"
 
 #include "driver/gpio.h"
@@ -16,24 +17,8 @@ namespace {
 
 Logger log{"doorbell"};
 
-constexpr int kDefaultRelayPin = 17;
-constexpr std::uint16_t kDefaultPressMs = 400;
 constexpr std::uint16_t kMinPressMs = 100;
 constexpr std::uint16_t kMaxPressMs = 2000;
-
-bool is_output_capable_gpio(int pin) {
-    if (pin < 0 || pin > 33) {
-        return false;
-    }
-    // Flash SPI (6–11) and common strapping pins — reject for relay.
-    if (pin >= 6 && pin <= 11) {
-        return false;
-    }
-    if (pin == 0 || pin == 2 || pin == 5 || pin == 12 || pin == 15) {
-        return false;
-    }
-    return true;
-}
 
 } // namespace
 
@@ -70,18 +55,20 @@ Result<void> DoorbellReceiver::start() {
     }
     espnow_ready_ = true;
     started_ = true;
-    log.info("doorbell receiver ready (pin=%d)", preferences_.device().doorbell.relay_pin);
+    log.info("doorbell receiver ready (target=%s pin=%d)", kIdfTargetName,
+             preferences_.device().doorbell.relay_pin);
     return Result<void>::ok();
 }
 
 void DoorbellReceiver::apply_settings() {
     auto& db = preferences_.device().doorbell;
     if (db.relay_pin == 0) {
-        db.relay_pin = kDefaultRelayPin;
+        db.relay_pin = kDefaultRelayGpio;
     }
-    if (!is_output_capable_gpio(db.relay_pin)) {
-        log.warn("invalid relay pin %d; using %d", db.relay_pin, kDefaultRelayPin);
-        db.relay_pin = kDefaultRelayPin;
+    if (!is_safe_output_gpio(db.relay_pin)) {
+        log.warn("invalid relay pin %d on %s; using %d", db.relay_pin, kIdfTargetName,
+                 kDefaultRelayGpio);
+        db.relay_pin = kDefaultRelayGpio;
     }
     db.press_ms = static_cast<std::uint16_t>(
         std::clamp(static_cast<int>(db.press_ms), static_cast<int>(kMinPressMs),
@@ -193,7 +180,7 @@ void DoorbellReceiver::pulse_relay() {
 void DoorbellReceiver::set_relay(bool active) {
     const auto& db = preferences_.device().doorbell;
     const int pin = configured_pin_ >= 0 ? configured_pin_ : db.relay_pin;
-    if (!is_output_capable_gpio(pin)) {
+    if (!is_safe_output_gpio(pin)) {
         return;
     }
     const int level = db.active_high ? (active ? 1 : 0) : (active ? 0 : 1);
@@ -204,7 +191,7 @@ void DoorbellReceiver::set_relay(bool active) {
 void DoorbellReceiver::configure_gpio() {
     const auto& db = preferences_.device().doorbell;
     const int pin = db.relay_pin;
-    if (!is_output_capable_gpio(pin)) {
+    if (!is_safe_output_gpio(pin)) {
         return;
     }
 

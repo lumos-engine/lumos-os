@@ -28,7 +28,7 @@ struct LedLayout {
 
 struct DoorbellSettings {
     bool enabled{false};
-    int relay_pin{17};
+    int relay_pin{kDefaultRelayGpio};
     bool active_high{true};
     std::uint16_t press_ms{400};
     std::string paired_tx_mac; // "AA:BB:CC:DD:EE:FF"; empty = unpaired (ignore all)

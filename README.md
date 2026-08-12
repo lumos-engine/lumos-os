@@ -6,13 +6,13 @@ LumosOS is an LED operating system. HyperHDR is one plugin among many.
 
 ## Hardware (v0.3)
 
-| Item          | Value                               |
-| ------------- | ----------------------------------- |
-| MCU           | ESP32-WROOM-32                      |
-| LEDs          | WS2815 (primary), SK6812 RGB / RGBW |
-| Default count | 140 (44 / 26 / 44 / 26 layout)      |
-| Default GPIO  | 16                                  |
-| Power         | Match your strip (e.g. 12V WS2815)  |
+| Item          | Value                                      |
+| ------------- | ------------------------------------------ |
+| MCU           | ESP32 or ESP32-S3 (one source, per-target build) |
+| LEDs          | WS2815 (primary), SK6812 RGB / RGBW        |
+| Default count | 140 (44 / 26 / 44 / 26 layout)             |
+| Default GPIO  | 16 (LED), 17 (doorbell relay)              |
+| Power         | Match your strip (e.g. 12V WS2815)         |
 
 ## Features (v0.3)
 
@@ -43,11 +43,30 @@ Deferred: **Matter** (ESP32-WROOM RAM too tight with the full stack; `lumos_matt
 
 Requires [ESP-IDF v5.3+](https://docs.espressif.com/projects/esp-idf/).
 
+One source tree; **separate builds** per chip (binaries are not interchangeable):
+
 ```bash
 . $HOME/esp/esp-idf/export.sh
-idf.py set-target esp32
-idf.py build
-idf.py -p PORT flash monitor
+
+# Classic ESP32
+./scripts/lumos_idf.sh esp32 build
+./scripts/lumos_idf.sh esp32 flash          # optional: PORT=/dev/cu.xxx
+
+# ESP32-S3
+./scripts/lumos_idf.sh esp32s3 build
+./scripts/lumos_idf.sh esp32s3 flash
+
+# Auto-detect the connected chip, then build+flash
+PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh auto build-flash
+```
+
+Each target keeps its own `sdkconfig.<target>` and `build-<target>/` directory. Shared defaults live in `sdkconfig.defaults`; chip-specific overrides in `sdkconfig.defaults.esp32` / `sdkconfig.defaults.esp32s3`. Pin safety helpers are in `components/lumos_core/include/lumos/core/board_pins.hpp`.
+
+Manual equivalent:
+
+```bash
+idf.py -B build-esp32 -D SDKCONFIG=sdkconfig.esp32 set-target esp32 build
+idf.py -B build-esp32s3 -D SDKCONFIG=sdkconfig.esp32s3 set-target esp32s3 build
 ```
 
 ## First boot
