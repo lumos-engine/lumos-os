@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lumos/core/framebuffer.hpp"
+#include "lumos/doorbell/doorbell_receiver.hpp"
 #include "lumos/plugin/plugin_manager.hpp"
 #include "lumos/preferences/preferences.hpp"
 #include "lumos/renderer/renderer.hpp"
@@ -13,7 +14,7 @@ namespace lumos {
 class RestApi {
 public:
     RestApi(Preferences& preferences, PluginManager& plugins, Renderer& renderer, WifiService& wifi,
-            const Framebuffer& framebuffer);
+            const Framebuffer& framebuffer, DoorbellReceiver& doorbell);
 
     Result<void> start(httpd_handle_t server);
     void set_server(httpd_handle_t server) { server_ = server; }
@@ -33,6 +34,9 @@ private:
     static esp_err_t get_wifi_scan(httpd_req_t* req);
     static esp_err_t post_wifi(httpd_req_t* req);
     static esp_err_t get_neighbors(httpd_req_t* req);
+    static esp_err_t get_doorbell(httpd_req_t* req);
+    static esp_err_t post_doorbell(httpd_req_t* req);
+    static esp_err_t post_doorbell_test(httpd_req_t* req);
     static esp_err_t get_wled_json(httpd_req_t* req);
     static esp_err_t put_wled_state(httpd_req_t* req);
 
@@ -46,6 +50,7 @@ private:
     Renderer& renderer_;
     WifiService& wifi_;
     const Framebuffer& framebuffer_;
+    DoorbellReceiver& doorbell_;
     httpd_handle_t server_{nullptr};
     bool wled_on_{true};
     bool wled_live_{false};

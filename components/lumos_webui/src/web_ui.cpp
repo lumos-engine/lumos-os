@@ -36,7 +36,11 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </style>
 </head>
 <body>
-<header><h1>LumosOS</h1><p>Recovery &amp; local configuration · API 0.3</p></header>
+<header>
+  <h1>LumosOS</h1>
+  <p>Recovery &amp; local configuration · API 0.3</p>
+  <p><a href="/doorbell" style="color:var(--accent);font-weight:600;text-decoration:none">Doorbell →</a></p>
+</header>
 <main>
 <section>
 <h2>Live preview</h2>
@@ -772,11 +776,125 @@ setInterval(refresh,15000);
 </html>
 )HTML";
 
+constexpr const char* kDoorbellHtml = R"HTML(<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>LumosOS · Doorbell</title>
+<style>
+:root{--bg:#0e1116;--card:#171c24;--text:#e8edf5;--muted:#8b95a8;--accent:#6cb6ff;--line:#2a3340}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{padding:1.25rem 1.25rem .5rem}h1{margin:0;font-size:1.4rem;letter-spacing:.04em}
+p{color:var(--muted)}main{padding:0 1.25rem 2rem;display:grid;gap:1rem;max-width:720px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1rem}
+label{display:block;margin:.5rem 0 .25rem;color:var(--muted);font-size:.85rem}
+input,select,button{width:100%;padding:.65rem .75rem;border-radius:8px;border:1px solid var(--line);background:#0f141b;color:var(--text)}
+button{background:var(--accent);color:#041018;border:none;font-weight:600;margin-top:.75rem;cursor:pointer}
+button.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.hint{font-size:.8rem;color:var(--muted);margin-top:.5rem}
+.check{display:flex;align-items:center;gap:.5rem;margin:.75rem 0 .25rem;color:var(--text)}
+.check input{width:auto}
+pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem;color:var(--muted)}
+a{color:var(--accent);font-weight:600;text-decoration:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Doorbell</h1>
+  <p>ESP-NOW receiver · relay pulse for battery bell</p>
+  <p><a href="/">← LumosOS / LEDs</a></p>
+</header>
+<main>
+<section>
+<h2>Settings</h2>
+<label class="check"><input id="enabled" type="checkbox"/> Enable doorbell receiver</label>
+<label>Relay GPIO</label>
+<input id="relayPin" type="number" min="4" max="33" value="17"/>
+<p class="hint">Default 17 (safe on ESP32-WROOM when LED data is on 16). Avoid 0/2/5/6–12/15 and input-only 34–39.</p>
+<label class="check"><input id="activeHigh" type="checkbox" checked/> Relay active-HIGH</label>
+<p class="hint">Uncheck for active-LOW relay modules.</p>
+<label>Press duration (ms)</label>
+<input id="pressMs" type="number" min="100" max="2000" value="400"/>
+<label>Paired transmitter MAC</label>
+<input id="txMac" placeholder="AA:BB:CC:DD:EE:FF"/>
+<p class="hint">Required. Empty or invalid MAC = ignore all ESP-NOW doorbell packets.</p>
+<button type="button" onclick="saveDoorbell()">Save</button>
+<button class="secondary" type="button" onclick="testRelay()">Test relay pulse</button>
+<pre id="msg"></pre>
+</section>
+<section>
+<h2>Status</h2>
+<pre id="status">Loading…</pre>
+<button class="secondary" type="button" onclick="loadDoorbell()">Refresh</button>
+</section>
+</main>
+<script>
+async function loadDoorbell(){
+  try{
+    const r=await fetch('/api/v1/doorbell');
+    const d=await r.json();
+    enabled.checked=!!d.enabled;
+    relayPin.value=d.relay_pin??17;
+    activeHigh.checked=d.active_high!==false;
+    pressMs.value=d.press_ms??400;
+    txMac.value=d.paired_tx_mac||'';
+    status.textContent=[
+      'enabled: '+!!d.enabled,
+      'espnow_ready: '+!!d.espnow_ready,
+      'paired: '+!!d.paired,
+      'relay_pin: '+(d.relay_pin??'—'),
+      'active_high: '+!!d.active_high,
+      'press_ms: '+(d.press_ms??'—'),
+      'paired_tx_mac: '+(d.paired_tx_mac||'(none)'),
+      'last_ring_ms: '+(d.last_ring_ms||0),
+      'last_seq: '+(d.last_seq??0),
+      'relay_active: '+!!d.relay_active
+    ].join('\n');
+  }catch(e){ status.textContent='Error: '+e.message; }
+}
+async function saveDoorbell(){
+  msg.textContent='Saving…';
+  try{
+    const body={
+      enabled:enabled.checked,
+      relay_pin:Number(relayPin.value)||17,
+      active_high:activeHigh.checked,
+      press_ms:Number(pressMs.value)||400,
+      paired_tx_mac:(txMac.value||'').trim()
+    };
+    const r=await fetch('/api/v1/doorbell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    msg.textContent=d.ok?'Saved.':'Error: '+(d.error||r.status);
+    await loadDoorbell();
+  }catch(e){ msg.textContent='Error: '+e.message; }
+}
+async function testRelay(){
+  msg.textContent='Pulsing relay…';
+  try{
+    const r=await fetch('/api/v1/doorbell/test',{method:'POST'});
+    const d=await r.json();
+    msg.textContent=d.ok?'Pulse sent.':'Error: '+(d.error||r.status);
+    await loadDoorbell();
+  }catch(e){ msg.textContent='Error: '+e.message; }
+}
+loadDoorbell();
+setInterval(loadDoorbell,10000);
+</script>
+</body>
+</html>
+)HTML";
+
 } // namespace
 
 esp_err_t WebUi::get_index(httpd_req_t* req) {
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, kIndexHtml, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t WebUi::get_doorbell(httpd_req_t* req) {
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, kDoorbellHtml, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t WebUi::get_captive(httpd_req_t* req) {
@@ -788,6 +906,7 @@ esp_err_t WebUi::get_captive(httpd_req_t* req) {
 Result<void> WebUi::start(httpd_handle_t server) {
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = get_index, .user_ctx = nullptr},
+        {.uri = "/doorbell", .method = HTTP_GET, .handler = get_doorbell, .user_ctx = nullptr},
         {.uri = "/generate_204", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},
         {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},
         {.uri = "/canonical.html", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},

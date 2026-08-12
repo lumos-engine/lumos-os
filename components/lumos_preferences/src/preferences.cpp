@@ -201,6 +201,17 @@ Result<void> Preferences::load() {
     get_u16("e_cbl", device_.edge_ignore.corner_bl);
     get_u16("e_ctl", device_.edge_ignore.corner_tl);
 
+    std::uint8_t db_en = device_.doorbell.enabled ? 1 : 0;
+    get_u8("db_en", db_en);
+    device_.doorbell.enabled = db_en != 0;
+    get_i32("db_pin", device_.doorbell.relay_pin);
+    std::uint8_t db_ah = device_.doorbell.active_high ? 1 : 0;
+    get_u8("db_ah", db_ah);
+    device_.doorbell.active_high = db_ah != 0;
+    get_u16("db_ms", device_.doorbell.press_ms);
+    device_.doorbell.paired_tx_mac =
+        nvs_get_str_key(handle, "db_mac", device_.doorbell.paired_tx_mac);
+
     size_t ign_len = 0;
     if (nvs_get_blob(handle, "ign_leds", nullptr, &ign_len) == ESP_OK && ign_len >= sizeof(std::uint16_t) &&
         (ign_len % sizeof(std::uint16_t)) == 0) {
@@ -262,6 +273,11 @@ Result<void> Preferences::save() {
     nvs_set_u16(handle, "e_cbr", device_.edge_ignore.corner_br);
     nvs_set_u16(handle, "e_cbl", device_.edge_ignore.corner_bl);
     nvs_set_u16(handle, "e_ctl", device_.edge_ignore.corner_tl);
+    nvs_set_u8(handle, "db_en", device_.doorbell.enabled ? 1 : 0);
+    nvs_set_i32(handle, "db_pin", device_.doorbell.relay_pin);
+    nvs_set_u8(handle, "db_ah", device_.doorbell.active_high ? 1 : 0);
+    nvs_set_u16(handle, "db_ms", device_.doorbell.press_ms);
+    nvs_set_str_key(handle, "db_mac", device_.doorbell.paired_tx_mac);
     if (device_.ignored_leds.empty()) {
         nvs_erase_key(handle, "ign_leds");
     } else {

@@ -26,6 +26,14 @@ struct LedLayout {
     }
 };
 
+struct DoorbellSettings {
+    bool enabled{false};
+    int relay_pin{17};
+    bool active_high{true};
+    std::uint16_t press_ms{400};
+    std::string paired_tx_mac; // "AA:BB:CC:DD:EE:FF"; empty = unpaired (ignore all)
+};
+
 struct DeviceSettings {
     // Physical wire length (driver / framebuffer size). NVS key remains "led_count".
     LedIndex led_count{kDefaultLedCount};
@@ -62,6 +70,8 @@ struct DeviceSettings {
     std::string wifi_netmask{"255.255.255.0"};
     std::string wifi_dns1;     // primary DNS; defaults to gateway if empty
     std::string wifi_dns2;     // secondary DNS; optional
+
+    DoorbellSettings doorbell{};
 
     LedIndex active_led_count() const { return layout.total(); }
     LedIndex physical_led_count() const { return led_count; }

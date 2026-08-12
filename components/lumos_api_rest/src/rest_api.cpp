@@ -116,12 +116,13 @@ cJSON* descriptor_to_json(const PluginDescriptor& d) {
 } // namespace
 
 RestApi::RestApi(Preferences& preferences, PluginManager& plugins, Renderer& renderer,
-                 WifiService& wifi, const Framebuffer& framebuffer)
+                 WifiService& wifi, const Framebuffer& framebuffer, DoorbellReceiver& doorbell)
     : preferences_(preferences),
       plugins_(plugins),
       renderer_(renderer),
       wifi_(wifi),
-      framebuffer_(framebuffer) {}
+      framebuffer_(framebuffer),
+      doorbell_(doorbell) {}
 
 std::string RestApi::build_leds_json(const Framebuffer& fb) {
     const LedIndex count = fb.size();
@@ -385,7 +386,34 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON_AddStringToObject(root, "wifi_netmask", d.wifi_netmask.c_str());
     cJSON_AddStringToObject(root, "wifi_dns1", d.wifi_dns1.c_str());
     cJSON_AddStringToObject(root, "wifi_dns2", d.wifi_dns2.c_str());
+    cJSON* db = cJSON_AddObjectToObject(root, "doorbell");
+    cJSON_AddBoolToObject(db, "enabled", d.doorbell.enabled);
+    cJSON_AddNumberToObject(db, "relay_pin", d.doorbell.relay_pin);
+    cJSON_AddBoolToObject(db, "active_high", d.doorbell.active_high);
+    cJSON_AddNumberToObject(db, "press_ms", d.doorbell.press_ms);
+    cJSON_AddStringToObject(db, "paired_tx_mac", d.doorbell.paired_tx_mac.c_str());
     return root;
+}
+
+void apply_doorbell_settings(DoorbellSettings& db, const cJSON* obj) {
+    if (!cJSON_IsObject(obj)) {
+        return;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(obj, "enabled"); cJSON_IsBool(v)) {
+        db.enabled = cJSON_IsTrue(v);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(obj, "relay_pin"); cJSON_IsNumber(v)) {
+        db.relay_pin = v->valueint;
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(obj, "active_high"); cJSON_IsBool(v)) {
+        db.active_high = cJSON_IsTrue(v);
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(obj, "press_ms"); cJSON_IsNumber(v)) {
+        db.press_ms = static_cast<std::uint16_t>(std::clamp(v->valueint, 100, 2000));
+    }
+    if (const cJSON* v = cJSON_GetObjectItem(obj, "paired_tx_mac"); cJSON_IsString(v)) {
+        db.paired_tx_mac = v->valuestring ? v->valuestring : "";
+    }
 }
 
 cJSON* plugin_params_to_json(const Preferences& preferences) {
@@ -495,6 +523,9 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "perimeter_direction"); cJSON_IsNumber(v)) {
         d.perimeter_direction = static_cast<PerimeterDirection>(std::clamp(v->valueint, 0, 1));
+    }
+    if (const cJSON* db = cJSON_GetObjectItem(json, "doorbell"); cJSON_IsObject(db)) {
+        apply_doorbell_settings(d.doorbell, db);
     }
 
     // Assign orientation from identify: which color (0=red..3=amber) is on each TV side.
@@ -700,9 +731,13 @@ esp_err_t RestApi::post_settings(httpd_req_t* req) {
     }
     bool reboot_required = false;
     bool hostname_changed = false;
+    const bool doorbell_touched = cJSON_IsObject(cJSON_GetObjectItem(json, "doorbell"));
     apply_device_settings(self->preferences_, self->renderer_, json, reboot_required,
                           hostname_changed);
     self->preferences_.save();
+    if (doorbell_touched) {
+        self->doorbell_.apply_settings();
+    }
     if (hostname_changed) {
         self->wifi_.apply_hostname();
         self->wifi_.start_mdns();
@@ -783,6 +818,7 @@ esp_err_t RestApi::post_config(httpd_req_t* req) {
 
     bool reboot_required = false;
     bool hostname_changed = false;
+    const bool doorbell_touched = cJSON_IsObject(cJSON_GetObjectItem(device, "doorbell"));
     apply_device_settings(self->preferences_, self->renderer_, device, reboot_required,
                           hostname_changed);
     if (clear_static_ip) {
@@ -796,6 +832,9 @@ esp_err_t RestApi::post_config(httpd_req_t* req) {
     }
 
     self->preferences_.save();
+    if (doorbell_touched) {
+        self->doorbell_.apply_settings();
+    }
     if (hostname_changed) {
         self->wifi_.apply_hostname();
         self->wifi_.start_mdns();
@@ -843,11 +882,62 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(w, "dns2", wifi.dns2.c_str());
     cJSON_AddStringToObject(w, "ssid", wifi.ssid.c_str());
     cJSON_AddNumberToObject(w, "mode", static_cast<int>(wifi.mode));
+    const auto db = self->doorbell_.status();
+    cJSON* doorbell = cJSON_AddObjectToObject(root, "doorbell");
+    cJSON_AddBoolToObject(doorbell, "enabled", db.enabled);
+    cJSON_AddBoolToObject(doorbell, "espnow_ready", db.espnow_ready);
+    cJSON_AddBoolToObject(doorbell, "paired", db.paired);
+    cJSON_AddNumberToObject(doorbell, "relay_pin", db.relay_pin);
+    cJSON_AddNumberToObject(doorbell, "last_ring_ms", db.last_ring_ms);
     char* printed = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     esp_err_t err = send_json(req, printed);
     cJSON_free(printed);
     return err;
+}
+
+esp_err_t RestApi::get_doorbell(httpd_req_t* req) {
+    auto* self = from_req(req);
+    const auto st = self->doorbell_.status();
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "enabled", st.enabled);
+    cJSON_AddBoolToObject(root, "espnow_ready", st.espnow_ready);
+    cJSON_AddBoolToObject(root, "paired", st.paired);
+    cJSON_AddNumberToObject(root, "relay_pin", st.relay_pin);
+    cJSON_AddBoolToObject(root, "active_high", st.active_high);
+    cJSON_AddNumberToObject(root, "press_ms", st.press_ms);
+    cJSON_AddStringToObject(root, "paired_tx_mac", st.paired_tx_mac.c_str());
+    cJSON_AddNumberToObject(root, "last_ring_ms", st.last_ring_ms);
+    cJSON_AddNumberToObject(root, "last_seq", st.last_seq);
+    cJSON_AddBoolToObject(root, "relay_active", st.relay_active);
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
+}
+
+esp_err_t RestApi::post_doorbell(httpd_req_t* req) {
+    auto* self = from_req(req);
+    std::string body;
+    if (read_body(req, body) != ESP_OK) {
+        return send_json(req, "{\"error\":\"bad body\"}", 400);
+    }
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (json == nullptr) {
+        return send_json(req, "{\"error\":\"invalid json\"}", 400);
+    }
+    apply_doorbell_settings(self->preferences_.device().doorbell, json);
+    self->preferences_.save();
+    self->doorbell_.apply_settings();
+    cJSON_Delete(json);
+    return send_json(req, "{\"ok\":true}");
+}
+
+esp_err_t RestApi::post_doorbell_test(httpd_req_t* req) {
+    auto* self = from_req(req);
+    self->doorbell_.test_pulse();
+    return send_json(req, "{\"ok\":true}");
 }
 
 esp_err_t RestApi::get_leds(httpd_req_t* req) {
@@ -1032,6 +1122,12 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
         {.uri = "/api/v1/neighbors", .method = HTTP_GET, .handler = get_neighbors, .user_ctx = this},
+        {.uri = "/api/v1/doorbell", .method = HTTP_GET, .handler = get_doorbell, .user_ctx = this},
+        {.uri = "/api/v1/doorbell", .method = HTTP_POST, .handler = post_doorbell, .user_ctx = this},
+        {.uri = "/api/v1/doorbell/test",
+         .method = HTTP_POST,
+         .handler = post_doorbell_test,
+         .user_ctx = this},
         {.uri = "/json", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
         {.uri = "/json/state", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
         {.uri = "/json/state", .method = HTTP_PUT, .handler = put_wled_state, .user_ctx = this},

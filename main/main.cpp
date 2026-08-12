@@ -3,6 +3,7 @@
 #include "lumos/core/framebuffer.hpp"
 #include "lumos/core/logger.hpp"
 #include "lumos/core/types.hpp"
+#include "lumos/doorbell/doorbell_receiver.hpp"
 #include "lumos/led/ws2815_rmt_driver.hpp"
 #include "lumos/ota/ota_service.hpp"
 #include "lumos/plugin/plugin_manager.hpp"
@@ -103,14 +104,19 @@ extern "C" void app_main() {
     auto wifi = std::make_unique<lumos::WifiService>(*preferences);
     wifi->start();
 
+    auto doorbell = std::make_unique<lumos::DoorbellReceiver>(*preferences);
+    if (!doorbell->start()) {
+        log.warn("Doorbell receiver failed to start (LEDs continue)");
+    }
+
     httpd_handle_t server = start_http_server();
     if (server == nullptr) {
         return;
     }
 
     auto webui = std::make_unique<lumos::WebUi>();
-    auto rest =
-        std::make_unique<lumos::RestApi>(*preferences, *plugins, *renderer, *wifi, *framebuffer);
+    auto rest = std::make_unique<lumos::RestApi>(*preferences, *plugins, *renderer, *wifi,
+                                                 *framebuffer, *doorbell);
     auto ws =
         std::make_unique<lumos::WsApi>(*preferences, *plugins, *renderer, *wifi, *framebuffer);
     auto ota = std::make_unique<lumos::OtaService>();
@@ -130,6 +136,7 @@ extern "C" void app_main() {
     static auto s_framebuffer = std::move(framebuffer);
     static auto s_plugins = std::move(plugins);
     static auto s_wifi = std::move(wifi);
+    static auto s_doorbell = std::move(doorbell);
     static auto s_webui = std::move(webui);
     static auto s_rest = std::move(rest);
     static auto s_ws = std::move(ws);
