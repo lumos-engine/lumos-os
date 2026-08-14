@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Build / flash LumosOS for esp32 or esp32s3 from one source tree.
+# Build / flash LumosOS (esp32 / esp32s3) or the doorbell transmitter (esp32 only).
 #
 # Usage:
 #   ./scripts/lumos_idf.sh esp32 build
 #   ./scripts/lumos_idf.sh esp32s3 build
 #   ./scripts/lumos_idf.sh esp32 flash
-#   ./scripts/lumos_idf.sh auto flash          # detect chip on PORT
+#   ./scripts/lumos_idf.sh auto flash          # detect chip on PORT (LumosOS)
 #   ./scripts/lumos_idf.sh auto build-flash
+#   ./scripts/lumos_idf.sh doorbell-tx build
+#   ./scripts/lumos_idf.sh esp32 doorbell-tx flash
 #
 # Env:
 #   PORT   serial port (optional; passed to idf.py / esptool)
@@ -17,17 +19,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-TARGET="${1:-}"
-ACTION="${2:-build}"
+ARG1="${1:-}"
+ARG2="${2:-}"
+ARG3="${3:-}"
 PORT="${PORT:-}"
 IDF_EXPORT="${IDF:-$HOME/esp/esp-idf/export.sh}"
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \?//'
+  sed -n '2,16p' "$0" | sed 's/^# \?//'
   exit 1
 }
 
-[[ -n "$TARGET" ]] || usage
+[[ -n "$ARG1" ]] || usage
 
 if [[ ! -f "$IDF_EXPORT" ]]; then
   echo "ESP-IDF export not found: $IDF_EXPORT" >&2
@@ -36,6 +39,23 @@ if [[ ! -f "$IDF_EXPORT" ]]; then
 fi
 # shellcheck disable=SC1090
 source "$IDF_EXPORT" >/dev/null
+
+PRODUCT="lumos"
+TARGET=""
+ACTION="build"
+
+if [[ "$ARG1" == "doorbell-tx" ]]; then
+  PRODUCT="doorbell-tx"
+  TARGET="esp32"
+  ACTION="${ARG2:-build}"
+elif [[ "$ARG2" == "doorbell-tx" ]]; then
+  PRODUCT="doorbell-tx"
+  TARGET="$ARG1"
+  ACTION="${ARG3:-build}"
+else
+  TARGET="$ARG1"
+  ACTION="${ARG2:-build}"
+fi
 
 detect_target() {
   local out
@@ -61,26 +81,38 @@ if [[ "$TARGET" == "auto" ]]; then
   echo "Detected target: $TARGET"
 fi
 
+if [[ "$PRODUCT" == "doorbell-tx" && "$TARGET" != "esp32" ]]; then
+  echo "doorbell-tx is classic ESP32 only (got $TARGET)" >&2
+  exit 1
+fi
+
 case "$TARGET" in
   esp32|esp32s3) ;;
   *)
-    echo "Unsupported target: $TARGET (use esp32, esp32s3, or auto)" >&2
+    echo "Unsupported target: $TARGET (use esp32, esp32s3, auto, or doorbell-tx)" >&2
     exit 1
     ;;
 esac
 
-BUILD_DIR="build-${TARGET}"
-SDKCONFIG="sdkconfig.${TARGET}"
+if [[ "$PRODUCT" == "doorbell-tx" ]]; then
+  BUILD_DIR="$ROOT/build-doorbell-tx"
+  SDKCONFIG="$ROOT/sdkconfig.doorbell-tx"
+  PROJECT_DIR="$ROOT/doorbell_tx"
+else
+  BUILD_DIR="$ROOT/build-${TARGET}"
+  SDKCONFIG="$ROOT/sdkconfig.${TARGET}"
+  PROJECT_DIR="$ROOT"
+fi
 
 idf_cmd() {
+  local extra=()
+  extra+=(-C "$PROJECT_DIR" -B "$BUILD_DIR" -D "SDKCONFIG=$SDKCONFIG")
   if [[ -n "$PORT" ]]; then
-    idf.py -B "$BUILD_DIR" -D SDKCONFIG="$SDKCONFIG" -p "$PORT" "$@"
-  else
-    idf.py -B "$BUILD_DIR" -D SDKCONFIG="$SDKCONFIG" "$@"
+    extra+=(-p "$PORT")
   fi
+  idf.py "${extra[@]}" "$@"
 }
 
-# Ensure this build dir is configured for the requested target.
 need_set_target=0
 if [[ ! -f "$SDKCONFIG" ]]; then
   need_set_target=1
@@ -89,7 +121,7 @@ elif ! grep -q "CONFIG_IDF_TARGET=\"${TARGET}\"" "$SDKCONFIG" 2>/dev/null; then
 fi
 
 if [[ "$need_set_target" -eq 1 ]]; then
-  echo "Configuring $TARGET (SDKCONFIG=$SDKCONFIG, build=$BUILD_DIR)…"
+  echo "Configuring $PRODUCT $TARGET (SDKCONFIG=$SDKCONFIG, build=$BUILD_DIR)…"
   idf_cmd set-target "$TARGET"
 fi
 
@@ -115,4 +147,4 @@ case "$ACTION" in
     ;;
 esac
 
-echo "Done: target=$TARGET action=$ACTION sdkconfig=$SDKCONFIG build=$BUILD_DIR"
+echo "Done: product=$PRODUCT target=$TARGET action=$ACTION sdkconfig=$SDKCONFIG build=$BUILD_DIR"

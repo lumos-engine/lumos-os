@@ -104,6 +104,7 @@ extern "C" void app_main() {
     auto wifi = std::make_unique<lumos::WifiService>(*preferences);
     wifi->start();
 
+    // Receiver only. Optocoupler / ESP-NOW TX is the doorbell_tx product, not this binary.
     auto doorbell = std::make_unique<lumos::DoorbellReceiver>(*preferences);
     if (!doorbell->start()) {
         log.warn("Doorbell receiver failed to start (LEDs continue)");

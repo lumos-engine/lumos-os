@@ -1,10 +1,17 @@
 build/
 build-esp32/
 build-esp32s3/
+build-doorbell-tx/
 sdkconfig
 sdkconfig.old
 sdkconfig.esp32
 sdkconfig.esp32s3
+sdkconfig.doorbell-tx
+doorbell_tx/sdkconfig
+doorbell_tx/sdkconfig.old
+doorbell_tx/build/
+doorbell_tx/managed_components/
+doorbell_tx/dependencies.lock
 dependencies.lock
 managed_components/
 .vscode/.browse.c_cpp.db*

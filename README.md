@@ -58,6 +58,10 @@ One source tree; **separate builds** per chip (binaries are not interchangeable)
 
 # Auto-detect the connected chip, then build+flash
 PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh auto build-flash
+
+# Doorbell transmitter (classic ESP32 only — optocoupler + ESP-NOW, no LEDs)
+./scripts/lumos_idf.sh doorbell-tx build
+PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx flash
 ```
 
 Each target keeps its own `sdkconfig.<target>` and `build-<target>/` directory. Shared defaults live in `sdkconfig.defaults`; chip-specific overrides in `sdkconfig.defaults.esp32` / `sdkconfig.defaults.esp32s3`. Pin safety helpers are in `components/lumos_core/include/lumos/core/board_pins.hpp`.
@@ -76,6 +80,18 @@ idf.py -B build-esp32s3 -D SDKCONFIG=sdkconfig.esp32s3 set-target esp32s3 build
 3. Open `http://lumosos.local` (mDNS label) or the device IP for recovery UI. Router DHCP client list should show **LumosOS**.
 4. Set LED count + layout to match HyperHDR (e.g. 140 = 44+26+44+26).
 5. Point HyperHDR at the device using the **Hyperk** or **DDP** LED driver (port 4048).
+
+## Doorbell transmitter (ESP #1)
+
+Separate slim firmware in `doorbell_tx/` (classic ESP32 only). LumosOS stays the receiver.
+
+1. Flash: `./scripts/lumos_idf.sh doorbell-tx flash`
+2. Join AP `LumosOS-Bell`, open `http://192.168.4.1/`
+3. Set the LED board's Wi‑Fi MAC, lock the same Wi‑Fi channel as that board, save
+4. Paste the transmitter MAC into LumosOS `/doorbell` as paired TX and enable
+5. Optocoupler default: **GPIO 4**, active-LOW (collector to GPIO, emitter to GND)
+
+ESP-NOW does not need a router; both boards must be on the **same channel**.
 
 ## Host unit tests
 

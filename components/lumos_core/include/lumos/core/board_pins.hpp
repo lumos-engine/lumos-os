@@ -14,17 +14,20 @@ namespace lumos {
 #if defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
 inline constexpr int kDefaultLedGpio = 16;
 inline constexpr int kDefaultRelayGpio = 17;
+inline constexpr int kDefaultOptoGpio = 4;
 inline constexpr int kMaxGpioNum = 48;
 inline constexpr const char* kIdfTargetName = "esp32s3";
 #elif defined(CONFIG_IDF_TARGET_ESP32) && CONFIG_IDF_TARGET_ESP32
 inline constexpr int kDefaultLedGpio = 16;
 inline constexpr int kDefaultRelayGpio = 17;
+inline constexpr int kDefaultOptoGpio = 4;
 inline constexpr int kMaxGpioNum = 39;
 inline constexpr const char* kIdfTargetName = "esp32";
 #else
 // Desktop / host_tests
 inline constexpr int kDefaultLedGpio = 16;
 inline constexpr int kDefaultRelayGpio = 17;
+inline constexpr int kDefaultOptoGpio = 4;
 inline constexpr int kMaxGpioNum = 39;
 inline constexpr const char* kIdfTargetName = "host";
 #endif
@@ -55,6 +58,30 @@ inline bool is_safe_output_gpio(int pin) {
     }
 #endif
     return true;
+}
+
+/** Optocoupler / button input. Allows ESP32 input-only pins 34–39. */
+inline bool is_safe_input_gpio(int pin) {
+    if (pin < 0 || pin > kMaxGpioNum) {
+        return false;
+    }
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
+    if (pin == 0 || pin == 3 || pin == 45 || pin == 46) {
+        return false;
+    }
+    if (pin == 19 || pin == 20) {
+        return false;
+    }
+    return true;
+#else
+    if (pin >= 6 && pin <= 11) {
+        return false;
+    }
+    if (pin == 0 || pin == 2 || pin == 5 || pin == 12 || pin == 15) {
+        return false;
+    }
+    return true;
+#endif
 }
 
 } // namespace lumos
