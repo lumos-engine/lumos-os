@@ -866,6 +866,7 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "name", kAppName.data());
     cJSON_AddStringToObject(root, "version", kAppVersion.data());
     cJSON_AddStringToObject(root, "active_plugin", self->plugins_.active_id().c_str());
+    cJSON_AddBoolToObject(root, "hyperhdr_active", self->plugins_.active_id() == "hyperhdr");
     cJSON_AddBoolToObject(root, "in_fallback", self->plugins_.in_fallback());
     cJSON_AddBoolToObject(root, "local_override", self->local_override_);
     cJSON_AddNumberToObject(root, "brightness", self->renderer_.brightness());
