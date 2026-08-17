@@ -109,7 +109,9 @@ void DoorbellTransmitter::apply_config(const DoorbellTxConfig& cfg) {
     }
     cfg_.channel = static_cast<std::uint8_t>(std::clamp(static_cast<int>(cfg_.channel), 1, 13));
     if (started_) {
-        configure_wifi_channel();
+        if (!sta_linked_) {
+            configure_wifi_channel();
+        }
         add_peer();
         configure_gpio();
     }
@@ -215,7 +217,7 @@ bool DoorbellTransmitter::select_peer(const std::uint8_t mac[6]) {
     if (mac == nullptr) {
         return false;
     }
-    std::uint8_t channel = cfg_.channel;
+    std::uint8_t channel = sta_linked_ ? radio_channel() : cfg_.channel;
     for (int i = 0; i < peer_count_; ++i) {
         if (mac_equal(peers_[i].mac, mac)) {
             if (peers_[i].channel >= 1 && peers_[i].channel <= 13) {
@@ -230,17 +232,31 @@ bool DoorbellTransmitter::select_peer(const std::uint8_t mac[6]) {
     cfg.channel = channel;
     apply_config(cfg);
     save_nvs();
-    add_espnow_peer(mac, channel, WIFI_IF_AP);
+    add_espnow_peer(mac, sta_linked_ ? 0 : channel, espnow_if());
     send_pair(DOORBELL_PAIR_CLAIM, mac);
     stop_pairing();
     log.info("paired RX %s ch=%u", format_mac(mac).c_str(), static_cast<unsigned>(channel));
     return true;
 }
 
+void DoorbellTransmitter::set_sta_linked(bool linked) {
+    sta_linked_ = linked;
+    if (!started_ || !espnow_ready_) {
+        return;
+    }
+    const auto ch = radio_channel();
+    if (ch >= 1 && ch <= 13) {
+        cfg_.channel = ch;
+    }
+    ensure_broadcast_peer();
+    add_peer();
+    log.info("ESP-NOW if=%s ch=%u mac=%s", sta_linked_ ? "STA" : "AP",
+             static_cast<unsigned>(cfg_.channel), own_mac().c_str());
+}
+
 std::string DoorbellTransmitter::own_mac() const {
     std::uint8_t mac[6]{};
-    // Setup AP + ESP-NOW both use the SoftAP interface.
-    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    own_mac_bytes(mac);
     return format_mac(mac);
 }
 
@@ -307,20 +323,27 @@ void DoorbellTransmitter::scan_task(void* arg) {
         return;
     }
     vTaskDelay(pdMS_TO_TICKS(350));
-    const auto home = self->cfg_.channel;
     self->ensure_broadcast_peer();
-    for (std::uint8_t ch = 1; ch <= 13 && self->pairing_active(); ++ch) {
-        self->set_ap_channel(ch);
-        (void)esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-        add_espnow_peer(kDoorbellBroadcastMac, ch, WIFI_IF_AP);
-        vTaskDelay(pdMS_TO_TICKS(40));
-        self->send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
-        vTaskDelay(pdMS_TO_TICKS(80));
-        self->send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
-        vTaskDelay(pdMS_TO_TICKS(200));
+    if (self->sta_linked_) {
+        for (int i = 0; i < 10 && self->pairing_active(); ++i) {
+            self->send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
+            vTaskDelay(pdMS_TO_TICKS(250));
+        }
+    } else {
+        const auto home = self->cfg_.channel;
+        for (std::uint8_t ch = 1; ch <= 13 && self->pairing_active(); ++ch) {
+            self->set_ap_channel(ch);
+            (void)esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+            add_espnow_peer(kDoorbellBroadcastMac, ch, self->espnow_if());
+            vTaskDelay(pdMS_TO_TICKS(40));
+            self->send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
+            vTaskDelay(pdMS_TO_TICKS(80));
+            self->send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        self->set_ap_channel(home);
+        add_espnow_peer(kDoorbellBroadcastMac, home, self->espnow_if());
     }
-    self->set_ap_channel(home);
-    add_espnow_peer(kDoorbellBroadcastMac, home, WIFI_IF_AP);
     self->scanning_ = false;
     log.info("doorbell TX scan done, %d peer(s)", self->peer_count_);
     vTaskDelete(nullptr);
@@ -406,6 +429,9 @@ void DoorbellTransmitter::configure_gpio() {
 }
 
 void DoorbellTransmitter::configure_wifi_channel() {
+    if (sta_linked_) {
+        return;
+    }
     set_ap_channel(cfg_.channel);
 }
 
@@ -421,13 +447,13 @@ void DoorbellTransmitter::add_peer() {
     if (!espnow_ready_ || !cfg_.rx_mac_valid) {
         return;
     }
-    if (!add_espnow_peer(cfg_.rx_mac, cfg_.channel, WIFI_IF_AP)) {
+    if (!add_espnow_peer(cfg_.rx_mac, sta_linked_ ? 0 : cfg_.channel, espnow_if())) {
         log.warn("esp_now_add_peer failed for %s", format_mac(cfg_.rx_mac).c_str());
     }
 }
 
 void DoorbellTransmitter::ensure_broadcast_peer() {
-    add_espnow_peer(kDoorbellBroadcastMac, 0, WIFI_IF_AP);
+    add_espnow_peer(kDoorbellBroadcastMac, 0, espnow_if());
 }
 
 void DoorbellTransmitter::send_pair(std::uint8_t type, const std::uint8_t* dest) {
@@ -437,7 +463,7 @@ void DoorbellTransmitter::send_pair(std::uint8_t type, const std::uint8_t* dest)
     std::uint8_t mac[6]{};
     own_mac_bytes(mac);
     DoorbellPairHello pkt{};
-    fill_pair_hello(pkt, type, DOORBELL_ROLE_TX, cfg_.channel, mac, "LumosOS-Bell", cfg_.tx_id);
+    fill_pair_hello(pkt, type, DOORBELL_ROLE_TX, radio_channel(), mac, "LumosOS-Bell", cfg_.tx_id);
     (void)esp_now_send(dest, reinterpret_cast<const std::uint8_t*>(&pkt), sizeof(pkt));
 }
 
@@ -490,7 +516,20 @@ void DoorbellTransmitter::note_peer(const std::uint8_t mac[6], const DoorbellPai
 }
 
 void DoorbellTransmitter::own_mac_bytes(std::uint8_t out[6]) const {
-    esp_read_mac(out, ESP_MAC_WIFI_SOFTAP);
+    esp_read_mac(out, sta_linked_ ? ESP_MAC_WIFI_STA : ESP_MAC_WIFI_SOFTAP);
+}
+
+wifi_interface_t DoorbellTransmitter::espnow_if() const {
+    return sta_linked_ ? WIFI_IF_STA : WIFI_IF_AP;
+}
+
+std::uint8_t DoorbellTransmitter::radio_channel() const {
+    std::uint8_t primary = cfg_.channel;
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+    if (esp_wifi_get_channel(&primary, &second) == ESP_OK && primary >= 1 && primary <= 13) {
+        return primary;
+    }
+    return cfg_.channel;
 }
 
 bool DoorbellTransmitter::pairing_active() const {

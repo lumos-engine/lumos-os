@@ -16,5 +16,9 @@ idf_component_register(
         esp_timer
         driver
         lumos_core
+        lumos_ota
+        app_update
+        mdns
+        json
         lwip
 )

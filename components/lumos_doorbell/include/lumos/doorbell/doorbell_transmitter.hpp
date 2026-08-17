@@ -6,6 +6,7 @@
 
 #include "esp_now.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
 
 #include <cstdint>
 #include <string>
@@ -52,6 +53,8 @@ public:
     void start_pairing(std::uint32_t duration_ms = kDoorbellPairDefaultMs);
     void stop_pairing();
     bool select_peer(const std::uint8_t mac[6]);
+    void set_sta_linked(bool linked);
+    bool sta_linked() const { return sta_linked_; }
 
 private:
     static void gpio_isr(void* arg);
@@ -73,6 +76,8 @@ private:
     void own_mac_bytes(std::uint8_t out[6]) const;
     bool pairing_active() const;
     void set_ap_channel(std::uint8_t channel);
+    wifi_interface_t espnow_if() const;
+    std::uint8_t radio_channel() const;
 
     DoorbellTxConfig cfg_{};
     bool started_{false};
@@ -87,6 +92,7 @@ private:
     esp_timer_handle_t hello_timer_{nullptr};
     std::uint64_t pairing_until_us_{0};
     bool scanning_{false};
+    bool sta_linked_{false};
     int peer_count_{0};
     DoorbellDiscoveredPeer peers_[kDoorbellMaxPeers]{};
 
