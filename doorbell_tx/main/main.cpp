@@ -49,7 +49,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <header><h1>Doorbell transmitter</h1><p>ESP-NOW · no LED stack</p></header>
 <main>
 <section>
-<p class="hint">Use <b>http://192.168.4.1/</b> (not https). Turn off mobile data if the page stays blank. Channel must match the LED board. Paste this board's MAC into LumosOS /doorbell as paired TX.</p>
+<p class="hint">Use <b>http://192.168.4.1/</b> (not https). Turn off mobile data if the page stays blank. Start pairing on LumosOS /doorbell, then tap Find nearby here.</p>
 <pre id="status">Loading…</pre>
 <label>LED / receiver MAC</label>
 <input id="rxMac" placeholder="AA:BB:CC:DD:EE:FF"/>
@@ -60,10 +60,24 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <label class="check"><input id="activeLow" type="checkbox" checked/> Active-LOW (typical optocoupler)</label>
 <button type="button" onclick="save()">Save</button>
 <button class="secondary" type="button" onclick="testSend()">Test send</button>
+<button class="secondary" type="button" onclick="findNearby()">Find nearby LED board</button>
 <pre id="msg"></pre>
+<div id="peers"></div>
 </section>
 </main>
 <script>
+let pairTimer=null;
+function renderPeers(d){
+  const box=document.getElementById('peers');
+  const list=d.peers||[];
+  if(!list.length){
+    box.innerHTML=d.scanning?'<p class="hint">Scanning channels 1–13… Wi-Fi may drop for a few seconds.</p>':
+      (d.pairing?'<p class="hint">No LumosOS receiver heard. Is pairing started on /doorbell?</p>':'');
+    return;
+  }
+  box.innerHTML=list.map(p=>'<button type="button" class="secondary" onclick="pick(\''+p.mac+'\')">'+
+    (p.name||'LumosOS')+' · '+p.mac+' · ch '+p.channel+' · RSSI '+p.rssi+'</button>').join('');
+}
 async function load(){
   const r=await fetch('/api'); const d=await r.json();
   rxMac.value=d.rx_mac||'';
@@ -71,12 +85,16 @@ async function load(){
   pin.value=d.opto_pin||4;
   activeLow.checked=!!d.active_low;
   status.textContent=[
-    'this_mac: '+(d.own_mac||'—')+'  (paste into LumosOS paired TX)',
+    'this_mac: '+(d.own_mac||'—')+'  (ESP-NOW TX)',
     'espnow: '+!!d.espnow_ready,
     'paired: '+!!d.paired,
+    'scanning: '+!!d.scanning,
     'last_seq: '+(d.last_seq||0),
     'last_send_ms: '+(d.last_send_ms||0)
   ].join('\n');
+  renderPeers(d);
+  if((d.pairing||d.scanning) && !pairTimer){ pairTimer=setInterval(load,1000); }
+  if(!d.pairing && !d.scanning && pairTimer){ clearInterval(pairTimer); pairTimer=null; }
 }
 async function save(){
   msg.textContent='Saving…';
@@ -93,6 +111,19 @@ async function save(){
 async function testSend(){
   msg.textContent='Sending…';
   const r=await fetch('/test',{method:'POST'});
+  msg.textContent=await r.text();
+  await load();
+}
+async function findNearby(){
+  msg.textContent='Searching… keep this page open. The hotspot may drop for ~5s.';
+  try{
+    await fetch('/discover',{method:'POST'});
+    await load();
+  }catch(e){ msg.textContent='Search started. Rejoin LumosOS-Bell if Wi-Fi dropped, then refresh.'; }
+}
+async function pick(mac){
+  msg.textContent='Pairing '+mac+'…';
+  const r=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'rx_mac='+encodeURIComponent(mac)});
   msg.textContent=await r.text();
   await load();
 }
@@ -141,21 +172,39 @@ esp_err_t get_api(httpd_req_t* req) {
     if (g_tx == nullptr) {
         return send_text(req, "{\"error\":\"not ready\"}", "application/json");
     }
-    const auto cfg = g_tx->config();
-    char json[384];
-    std::snprintf(json, sizeof(json),
-                  "{\"own_mac\":\"%s\",\"rx_mac\":\"%s\",\"paired\":%s,\"channel\":%u,"
-                  "\"opto_pin\":%d,\"active_low\":%s,\"espnow_ready\":%s,"
-                  "\"last_seq\":%u,\"last_send_ms\":%u}",
-                  g_tx->own_mac().c_str(),
-                  cfg.rx_mac_valid ? lumos::format_mac(cfg.rx_mac).c_str() : "",
-                  cfg.rx_mac_valid ? "true" : "false",
-                  static_cast<unsigned>(cfg.channel), cfg.opto_pin,
-                  cfg.active_low ? "true" : "false",
-                  g_tx->espnow_ready() ? "true" : "false",
-                  static_cast<unsigned>(g_tx->last_seq()),
-                  static_cast<unsigned>(g_tx->last_send_ms()));
-    return send_text(req, json, "application/json");
+    const auto st = g_tx->status();
+    const auto& cfg = st.cfg;
+    std::string json = "{";
+    json += "\"own_mac\":\"" + st.own_mac + "\"";
+    json += ",\"rx_mac\":\"";
+    json += cfg.rx_mac_valid ? lumos::format_mac(cfg.rx_mac) : "";
+    json += "\",\"paired\":";
+    json += st.paired ? "true" : "false";
+    json += ",\"channel\":" + std::to_string(cfg.channel);
+    json += ",\"opto_pin\":" + std::to_string(cfg.opto_pin);
+    json += ",\"active_low\":";
+    json += cfg.active_low ? "true" : "false";
+    json += ",\"espnow_ready\":";
+    json += st.espnow_ready ? "true" : "false";
+    json += ",\"last_seq\":" + std::to_string(st.last_seq);
+    json += ",\"last_send_ms\":" + std::to_string(st.last_send_ms);
+    json += ",\"pairing\":";
+    json += st.pairing ? "true" : "false";
+    json += ",\"scanning\":";
+    json += st.scanning ? "true" : "false";
+    json += ",\"pairing_ms\":" + std::to_string(st.pairing_ms);
+    json += ",\"peers\":[";
+    for (int i = 0; i < st.peer_count; ++i) {
+        if (i) {
+            json += ",";
+        }
+        json += "{\"mac\":\"" + lumos::format_mac(st.peers[i].mac) + "\"";
+        json += ",\"name\":\"" + std::string(st.peers[i].name) + "\"";
+        json += ",\"channel\":" + std::to_string(st.peers[i].channel);
+        json += ",\"rssi\":" + std::to_string(st.peers[i].rssi) + "}";
+    }
+    json += "]}";
+    return send_text(req, json.c_str(), "application/json");
 }
 
 esp_err_t post_save(httpd_req_t* req) {
@@ -195,6 +244,36 @@ esp_err_t post_test(httpd_req_t* req) {
     return send_text(req, "Sent (if paired).");
 }
 
+esp_err_t post_discover(httpd_req_t* req) {
+    if (g_tx == nullptr) {
+        return send_text(req, "not ready");
+    }
+    g_tx->start_pairing();
+    return send_text(req, "Scanning nearby LumosOS receivers…");
+}
+
+esp_err_t post_pair(httpd_req_t* req) {
+    if (g_tx == nullptr) {
+        return send_text(req, "not ready");
+    }
+    char buf[256];
+    const int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (len <= 0) {
+        return send_text(req, "bad body");
+    }
+    buf[len] = 0;
+    const auto mac = form_value(buf, "rx_mac");
+    std::uint8_t parsed[6]{};
+    if (!lumos::parse_mac(mac, parsed)) {
+        return send_text(req, "mac required");
+    }
+    if (!g_tx->select_peer(parsed)) {
+        return send_text(req, "pair failed");
+    }
+    return send_text(req, "Paired.");
+}
+
+
 esp_err_t http_404_redirect(httpd_req_t* req, httpd_err_code_t) {
     // iOS needs a body; a header-only redirect is not treated as a captive portal.
     httpd_resp_set_status(req, "302 Temporary Redirect");
@@ -215,7 +294,7 @@ void wifi_event_handler(void*, esp_event_base_t, std::int32_t id, void* data) {
 
 void start_http() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 12;
     config.max_open_sockets = 7;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
@@ -229,6 +308,8 @@ void start_http() {
         {.uri = "/api", .method = HTTP_GET, .handler = get_api, .user_ctx = nullptr},
         {.uri = "/save", .method = HTTP_POST, .handler = post_save, .user_ctx = nullptr},
         {.uri = "/test", .method = HTTP_POST, .handler = post_test, .user_ctx = nullptr},
+        {.uri = "/discover", .method = HTTP_POST, .handler = post_discover, .user_ctx = nullptr},
+        {.uri = "/pair", .method = HTTP_POST, .handler = post_pair, .user_ctx = nullptr},
     };
     for (const auto& r : routes) {
         httpd_register_uri_handler(server, &r);

@@ -3,6 +3,7 @@
 #include "lumos/core/led_geometry.hpp"
 #include "lumos/core/perimeter_map.hpp"
 #include "lumos/core/types.hpp"
+#include "lumos/doorbell/doorbell_mac.hpp"
 #include "lumos/wifi/neighbor_info.hpp"
 
 #include <cJSON.h>
@@ -908,9 +909,22 @@ esp_err_t RestApi::get_doorbell(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "active_high", st.active_high);
     cJSON_AddNumberToObject(root, "press_ms", st.press_ms);
     cJSON_AddStringToObject(root, "paired_tx_mac", st.paired_tx_mac.c_str());
+    cJSON_AddStringToObject(root, "own_mac", st.own_mac.c_str());
+    cJSON_AddNumberToObject(root, "wifi_channel", st.wifi_channel);
     cJSON_AddNumberToObject(root, "last_ring_ms", st.last_ring_ms);
     cJSON_AddNumberToObject(root, "last_seq", st.last_seq);
     cJSON_AddBoolToObject(root, "relay_active", st.relay_active);
+    cJSON_AddBoolToObject(root, "pairing", st.pairing);
+    cJSON_AddNumberToObject(root, "pairing_ms", st.pairing_ms);
+    cJSON* peers = cJSON_AddArrayToObject(root, "peers");
+    for (int i = 0; i < st.peer_count; ++i) {
+        cJSON* p = cJSON_CreateObject();
+        cJSON_AddStringToObject(p, "mac", format_mac(st.peers[i].mac).c_str());
+        cJSON_AddStringToObject(p, "name", st.peers[i].name);
+        cJSON_AddNumberToObject(p, "channel", st.peers[i].channel);
+        cJSON_AddNumberToObject(p, "rssi", st.peers[i].rssi);
+        cJSON_AddItemToArray(peers, p);
+    }
     char* printed = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     esp_err_t err = send_json(req, printed);
@@ -938,6 +952,35 @@ esp_err_t RestApi::post_doorbell(httpd_req_t* req) {
 esp_err_t RestApi::post_doorbell_test(httpd_req_t* req) {
     auto* self = from_req(req);
     self->doorbell_.test_pulse();
+    return send_json(req, "{\"ok\":true}");
+}
+
+esp_err_t RestApi::post_doorbell_pair_start(httpd_req_t* req) {
+    auto* self = from_req(req);
+    self->doorbell_.start_pairing();
+    return send_json(req, "{\"ok\":true,\"pairing\":true}");
+}
+
+esp_err_t RestApi::post_doorbell_pair_select(httpd_req_t* req) {
+    auto* self = from_req(req);
+    std::string body;
+    if (read_body(req, body) != ESP_OK) {
+        return send_json(req, "{\"error\":\"bad body\"}", 400);
+    }
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (json == nullptr) {
+        return send_json(req, "{\"error\":\"invalid json\"}", 400);
+    }
+    const cJSON* mac = cJSON_GetObjectItem(json, "mac");
+    std::uint8_t parsed[6]{};
+    const bool ok = cJSON_IsString(mac) && parse_mac(mac->valuestring, parsed);
+    cJSON_Delete(json);
+    if (!ok) {
+        return send_json(req, "{\"error\":\"mac required\"}", 400);
+    }
+    if (!self->doorbell_.select_peer(parsed)) {
+        return send_json(req, "{\"error\":\"pair failed\"}", 400);
+    }
     return send_json(req, "{\"ok\":true}");
 }
 
@@ -1128,6 +1171,14 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/doorbell/test",
          .method = HTTP_POST,
          .handler = post_doorbell_test,
+         .user_ctx = this},
+        {.uri = "/api/v1/doorbell/pair/start",
+         .method = HTTP_POST,
+         .handler = post_doorbell_pair_start,
+         .user_ctx = this},
+        {.uri = "/api/v1/doorbell/pair",
+         .method = HTTP_POST,
+         .handler = post_doorbell_pair_select,
          .user_ctx = this},
         {.uri = "/json", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},
         {.uri = "/json/state", .method = HTTP_GET, .handler = get_wled_json, .user_ctx = this},

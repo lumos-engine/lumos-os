@@ -797,6 +797,7 @@ button.secondary{background:transparent;color:var(--accent);border:1px solid var
 .check input{width:auto}
 pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem;color:var(--muted)}
 a{color:var(--accent);font-weight:600;text-decoration:none}
+.peer{display:block;text-align:left;margin-top:.5rem}
 </style>
 </head>
 <body>
@@ -806,6 +807,13 @@ a{color:var(--accent);font-weight:600;text-decoration:none}
   <p><a href="/">← LumosOS / LEDs</a></p>
 </header>
 <main>
+<section>
+<h2>Pair nearby transmitter</h2>
+<p class="hint">On the doorbell TX, open the LumosOS-Bell page and tap <b>Find nearby</b> at the same time. Then tap the device here (or there). 60 seconds.</p>
+<button type="button" onclick="startPair()">Start pairing</button>
+<pre id="pairStatus">Idle</pre>
+<div id="peers"></div>
+</section>
 <section>
 <h2>Settings</h2>
 <label class="check"><input id="enabled" type="checkbox"/> Enable doorbell receiver</label>
@@ -818,7 +826,7 @@ a{color:var(--accent);font-weight:600;text-decoration:none}
 <input id="pressMs" type="number" min="100" max="2000" value="400"/>
 <label>Paired transmitter MAC</label>
 <input id="txMac" placeholder="AA:BB:CC:DD:EE:FF"/>
-<p class="hint">Required. Empty or invalid MAC = ignore all ESP-NOW doorbell packets.</p>
+<p class="hint">Required if you skip pairing. Empty or invalid MAC = ignore all ESP-NOW doorbell packets.</p>
 <button type="button" onclick="saveDoorbell()">Save</button>
 <button class="secondary" type="button" onclick="testRelay()">Test relay pulse</button>
 <pre id="msg"></pre>
@@ -830,6 +838,17 @@ a{color:var(--accent);font-weight:600;text-decoration:none}
 </section>
 </main>
 <script>
+let pairTimer=null;
+function renderPeers(d){
+  const box=document.getElementById('peers');
+  const list=d.peers||[];
+  if(!list.length){
+    box.innerHTML=d.pairing?'<p class="hint">Listening for LumosOS-Bell…</p>':'';
+    return;
+  }
+  box.innerHTML=list.map(p=>'<button type="button" class="peer" onclick="selectPeer(\''+p.mac+'\')">'+
+    (p.name||'Doorbell TX')+' · '+p.mac+' · ch '+p.channel+' · RSSI '+p.rssi+'</button>').join('');
+}
 async function loadDoorbell(){
   try{
     const r=await fetch('/api/v1/doorbell');
@@ -840,6 +859,8 @@ async function loadDoorbell(){
     pressMs.value=d.press_ms??400;
     txMac.value=d.paired_tx_mac||'';
     status.textContent=[
+      'own_mac: '+(d.own_mac||'—'),
+      'wifi_channel: '+(d.wifi_channel??'—'),
       'enabled: '+!!d.enabled,
       'espnow_ready: '+!!d.espnow_ready,
       'paired: '+!!d.paired,
@@ -851,7 +872,27 @@ async function loadDoorbell(){
       'last_seq: '+(d.last_seq??0),
       'relay_active: '+!!d.relay_active
     ].join('\n');
+    pairStatus.textContent=d.pairing?('Pairing… '+Math.round((d.pairing_ms||0)/1000)+'s left'):'Idle';
+    renderPeers(d);
+    if(d.pairing && !pairTimer){ pairTimer=setInterval(loadDoorbell,1000); }
+    if(!d.pairing && pairTimer){ clearInterval(pairTimer); pairTimer=null; }
   }catch(e){ status.textContent='Error: '+e.message; }
+}
+async function startPair(){
+  pairStatus.textContent='Starting…';
+  try{
+    await fetch('/api/v1/doorbell/pair/start',{method:'POST'});
+    await loadDoorbell();
+  }catch(e){ pairStatus.textContent='Error: '+e.message; }
+}
+async function selectPeer(mac){
+  pairStatus.textContent='Pairing '+mac+'…';
+  try{
+    const r=await fetch('/api/v1/doorbell/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac})});
+    const d=await r.json();
+    pairStatus.textContent=d.ok?'Paired '+mac:'Error: '+(d.error||r.status);
+    await loadDoorbell();
+  }catch(e){ pairStatus.textContent='Error: '+e.message; }
 }
 async function saveDoorbell(){
   msg.textContent='Saving…';

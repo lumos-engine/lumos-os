@@ -37,6 +37,8 @@ private:
     static esp_err_t get_doorbell(httpd_req_t* req);
     static esp_err_t post_doorbell(httpd_req_t* req);
     static esp_err_t post_doorbell_test(httpd_req_t* req);
+    static esp_err_t post_doorbell_pair_start(httpd_req_t* req);
+    static esp_err_t post_doorbell_pair_select(httpd_req_t* req);
     static esp_err_t get_wled_json(httpd_req_t* req);
     static esp_err_t put_wled_state(httpd_req_t* req);
 

@@ -5,6 +5,7 @@
 #include "lumos/core/logger.hpp"
 
 #include "driver/gpio.h"
+#include "esp_mac.h"
 #include "esp_now.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -20,6 +21,17 @@ Logger log{"doorbell"};
 
 constexpr std::uint16_t kMinPressMs = 100;
 constexpr std::uint16_t kMaxPressMs = 2000;
+constexpr std::uint64_t kHelloPeriodUs = 400 * 1000;
+
+bool add_peer(const std::uint8_t mac[6], std::uint8_t channel, wifi_interface_t ifidx) {
+    esp_now_del_peer(mac);
+    esp_now_peer_info_t peer{};
+    std::memcpy(peer.peer_addr, mac, 6);
+    peer.channel = channel;
+    peer.ifidx = ifidx;
+    peer.encrypt = false;
+    return esp_now_add_peer(&peer) == ESP_OK;
+}
 
 } // namespace
 
@@ -40,7 +52,15 @@ Result<void> DoorbellReceiver::start() {
         .name = "doorbell_rel",
         .skip_unhandled_events = true,
     };
-    if (esp_timer_create(&targs, &release_timer_) != ESP_OK) {
+    const esp_timer_create_args_t hello_args{
+        .callback = &DoorbellReceiver::hello_timer_cb,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "doorbell_hi",
+        .skip_unhandled_events = true,
+    };
+    if (esp_timer_create(&targs, &release_timer_) != ESP_OK ||
+        esp_timer_create(&hello_args, &hello_timer_) != ESP_OK) {
         return Result<void>::fail(ErrorCode::IoError, "doorbell timer create failed");
     }
 
@@ -107,17 +127,74 @@ DoorbellStatus DoorbellReceiver::status() const {
     st.active_high = db.active_high;
     st.press_ms = db.press_ms;
     st.paired_tx_mac = db.paired_tx_mac;
+    std::uint8_t mac[6]{};
+    own_mac_bytes(mac);
+    st.own_mac = format_mac(mac);
+    st.wifi_channel = current_channel();
     st.last_ring_ms = last_ring_ms_;
     st.last_seq = last_seq_;
     st.relay_active = relay_active_;
+    st.pairing = pairing_active();
+    if (st.pairing) {
+        const auto now = static_cast<std::uint64_t>(esp_timer_get_time());
+        st.pairing_ms = static_cast<std::uint32_t>((pairing_until_us_ - now) / 1000ULL);
+    }
+    st.peer_count = peer_count_;
+    for (int i = 0; i < peer_count_ && i < kDoorbellMaxPeers; ++i) {
+        st.peers[i] = peers_[i];
+    }
     return st;
+}
+
+void DoorbellReceiver::start_pairing(std::uint32_t duration_ms) {
+    if (!espnow_ready_) {
+        return;
+    }
+    peer_count_ = 0;
+    const auto ms = duration_ms == 0 ? kDoorbellPairDefaultMs : duration_ms;
+    pairing_until_us_ = static_cast<std::uint64_t>(esp_timer_get_time()) +
+                        static_cast<std::uint64_t>(ms) * 1000ULL;
+    ensure_broadcast_peer();
+    if (hello_timer_ != nullptr) {
+        esp_timer_stop(hello_timer_);
+        esp_timer_start_periodic(hello_timer_, kHelloPeriodUs);
+    }
+    send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
+    log.info("doorbell pairing for %u ms on ch=%u", static_cast<unsigned>(ms),
+             static_cast<unsigned>(current_channel()));
+}
+
+void DoorbellReceiver::stop_pairing() {
+    pairing_until_us_ = 0;
+    if (hello_timer_ != nullptr) {
+        esp_timer_stop(hello_timer_);
+    }
+}
+
+bool DoorbellReceiver::select_peer(const std::uint8_t mac[6]) {
+    if (mac == nullptr) {
+        return false;
+    }
+    preferences_.device().doorbell.paired_tx_mac = format_mac(mac);
+    preferences_.device().doorbell.enabled = true;
+    preferences_.save();
+    apply_settings();
+    add_peer(mac, 0, WIFI_IF_STA);
+    send_pair(DOORBELL_PAIR_CLAIM, mac);
+    stop_pairing();
+    log.info("paired TX %s", format_mac(mac).c_str());
+    return true;
 }
 
 void DoorbellReceiver::recv_cb(const esp_now_recv_info_t* info, const std::uint8_t* data, int len) {
     if (instance_ == nullptr || info == nullptr || data == nullptr) {
         return;
     }
-    instance_->on_packet(info->src_addr, data, len);
+    int rssi = 0;
+    if (info->rx_ctrl != nullptr) {
+        rssi = info->rx_ctrl->rssi;
+    }
+    instance_->on_packet(info->src_addr, data, len, rssi);
 }
 
 void DoorbellReceiver::release_timer_cb(void* arg) {
@@ -127,18 +204,35 @@ void DoorbellReceiver::release_timer_cb(void* arg) {
     }
 }
 
-void DoorbellReceiver::on_packet(const std::uint8_t mac[6], const std::uint8_t* data, int len) {
-    const auto& db = preferences_.device().doorbell;
-    if (!db.enabled || !espnow_ready_) {
+void DoorbellReceiver::hello_timer_cb(void* arg) {
+    auto* self = static_cast<DoorbellReceiver*>(arg);
+    if (self == nullptr) {
         return;
     }
-    if (!paired_valid_) {
+    if (!self->pairing_active()) {
+        self->stop_pairing();
+        return;
+    }
+    self->send_pair(DOORBELL_PAIR_HELLO, kDoorbellBroadcastMac);
+}
+
+void DoorbellReceiver::on_packet(const std::uint8_t mac[6], const std::uint8_t* data, int len,
+                                int rssi) {
+    if (!espnow_ready_ || len < static_cast<int>(sizeof(DoorbellPacket))) {
+        return;
+    }
+
+    DoorbellPairHello hello{};
+    if (parse_pair_hello(data, len, hello)) {
+        handle_pair(mac, hello, rssi);
+        return;
+    }
+
+    const auto& db = preferences_.device().doorbell;
+    if (!db.enabled || !paired_valid_) {
         return;
     }
     if (!mac_equal(mac, paired_mac_)) {
-        return;
-    }
-    if (len < static_cast<int>(sizeof(DoorbellPacket))) {
         return;
     }
 
@@ -160,6 +254,47 @@ void DoorbellReceiver::on_packet(const std::uint8_t mac[6], const std::uint8_t* 
     log.info("doorbell press from %s seq=%u", format_mac(mac).c_str(),
              static_cast<unsigned>(pkt.seq));
     pulse_relay();
+}
+
+void DoorbellReceiver::handle_pair(const std::uint8_t src[6], const DoorbellPairHello& hello,
+                                  int rssi) {
+    std::uint8_t self_mac[6]{};
+    own_mac_bytes(self_mac);
+    if (mac_equal(src, self_mac)) {
+        return;
+    }
+    if (hello.role != DOORBELL_ROLE_TX) {
+        return;
+    }
+    if (!pairing_active()) {
+        return;
+    }
+    note_peer(src, hello, rssi);
+    if (hello.type == DOORBELL_PAIR_CLAIM) {
+        select_peer(src);
+    }
+}
+
+void DoorbellReceiver::note_peer(const std::uint8_t mac[6], const DoorbellPairHello& hello,
+                                int rssi) {
+    for (int i = 0; i < peer_count_; ++i) {
+        if (mac_equal(peers_[i].mac, mac)) {
+            peers_[i].channel = hello.channel;
+            peers_[i].role = hello.role;
+            peers_[i].rssi = static_cast<std::int8_t>(rssi);
+            std::memcpy(peers_[i].name, hello.name, sizeof(peers_[i].name));
+            return;
+        }
+    }
+    if (peer_count_ >= kDoorbellMaxPeers) {
+        return;
+    }
+    auto& p = peers_[peer_count_++];
+    std::memcpy(p.mac, mac, 6);
+    p.channel = hello.channel;
+    p.role = hello.role;
+    p.rssi = static_cast<std::int8_t>(rssi);
+    std::memcpy(p.name, hello.name, sizeof(p.name));
 }
 
 void DoorbellReceiver::pulse_relay() {
@@ -209,6 +344,45 @@ void DoorbellReceiver::configure_gpio() {
     gpio_config(&io);
     configured_pin_ = pin;
     set_relay(false);
+}
+
+void DoorbellReceiver::send_pair(std::uint8_t type, const std::uint8_t* dest) {
+    if (!espnow_ready_ || dest == nullptr) {
+        return;
+    }
+    std::uint8_t mac[6]{};
+    own_mac_bytes(mac);
+    DoorbellPairHello pkt{};
+    std::string name = preferences_.device().hostname;
+    if (name.empty()) {
+        name = "LumosOS";
+    }
+    fill_pair_hello(pkt, type, DOORBELL_ROLE_RX, current_channel(), mac, name.c_str(), 1);
+    (void)esp_now_send(dest, reinterpret_cast<const std::uint8_t*>(&pkt), sizeof(pkt));
+}
+
+void DoorbellReceiver::ensure_broadcast_peer() {
+    add_peer(kDoorbellBroadcastMac, 0, WIFI_IF_STA);
+}
+
+bool DoorbellReceiver::pairing_active() const {
+    if (pairing_until_us_ == 0) {
+        return false;
+    }
+    return static_cast<std::uint64_t>(esp_timer_get_time()) < pairing_until_us_;
+}
+
+std::uint8_t DoorbellReceiver::current_channel() const {
+    std::uint8_t primary = 0;
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+    if (esp_wifi_get_channel(&primary, &second) != ESP_OK) {
+        return 0;
+    }
+    return primary;
+}
+
+void DoorbellReceiver::own_mac_bytes(std::uint8_t out[6]) const {
+    esp_read_mac(out, ESP_MAC_WIFI_STA);
 }
 
 bool DoorbellReceiver::parse_paired_mac(std::uint8_t out[6]) const {
