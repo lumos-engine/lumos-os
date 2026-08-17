@@ -1,6 +1,7 @@
 #include "lumos/core/logger.hpp"
 #include "lumos/doorbell/doorbell_mac.hpp"
 #include "lumos/doorbell/doorbell_transmitter.hpp"
+#include "lumos/wifi/captive_dns.hpp"
 
 #include "esp_event.h"
 #include "esp_http_server.h"
@@ -10,17 +11,18 @@
 #include "nvs_flash.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
-#include <cstring>
-#include <memory>
 #include <string>
 
 namespace {
 
 lumos::Logger log{"doorbell_tx_main"};
 lumos::DoorbellTransmitter* g_tx{nullptr};
+lumos::CaptiveDns g_captive_dns;
+esp_netif_t* g_ap_netif{nullptr};
 
 constexpr const char* kApSsid = "LumosOS-Bell";
 
@@ -47,7 +49,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <header><h1>Doorbell transmitter</h1><p>ESP-NOW · no LED stack</p></header>
 <main>
 <section>
-<p class="hint">Join Wi-Fi <b>LumosOS-Bell</b>, then open this page. Channel must match the LED board's Wi-Fi channel. Paste this board's MAC into LumosOS /doorbell as paired TX.</p>
+<p class="hint">Use <b>http://192.168.4.1/</b> (not https). Turn off mobile data if the page stays blank. Channel must match the LED board. Paste this board's MAC into LumosOS /doorbell as paired TX.</p>
 <pre id="status">Loading…</pre>
 <label>LED / receiver MAC</label>
 <input id="rxMac" placeholder="AA:BB:CC:DD:EE:FF"/>
@@ -193,10 +195,30 @@ esp_err_t post_test(httpd_req_t* req) {
     return send_text(req, "Sent (if paired).");
 }
 
+esp_err_t http_404_redirect(httpd_req_t* req, httpd_err_code_t) {
+    // iOS needs a body; a header-only redirect is not treated as a captive portal.
+    httpd_resp_set_status(req, "302 Temporary Redirect");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, "Redirect to the captive portal", HTTPD_RESP_USE_STRLEN);
+}
+
+void wifi_event_handler(void*, esp_event_base_t, std::int32_t id, void* data) {
+    if (id == WIFI_EVENT_AP_STACONNECTED) {
+        const auto* ev = static_cast<wifi_event_ap_staconnected_t*>(data);
+        log.info("AP client join " MACSTR " AID=%d", MAC2STR(ev->mac), ev->aid);
+    } else if (id == WIFI_EVENT_AP_STADISCONNECTED) {
+        const auto* ev = static_cast<wifi_event_ap_stadisconnected_t*>(data);
+        log.info("AP client leave " MACSTR, MAC2STR(ev->mac));
+    }
+}
+
 void start_http() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 8;
+    config.max_open_sockets = 7;
     config.stack_size = 6144;
+    config.lru_purge_enable = true;
     httpd_handle_t server = nullptr;
     if (httpd_start(&server, &config) != ESP_OK) {
         log.error("httpd_start failed");
@@ -211,30 +233,37 @@ void start_http() {
     for (const auto& r : routes) {
         httpd_register_uri_handler(server, &r);
     }
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_redirect);
+    log.info("HTTP on :80");
 }
 
-void start_wifi_apsta(std::uint8_t channel) {
+void start_wifi_ap(std::uint8_t channel) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_ap();
-    esp_netif_create_default_wifi_sta();
+    g_ap_netif = esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, nullptr));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
 
     wifi_config_t ap{};
     std::strncpy(reinterpret_cast<char*>(ap.ap.ssid), kApSsid, sizeof(ap.ap.ssid));
     ap.ap.ssid_len = static_cast<std::uint8_t>(std::strlen(kApSsid));
     ap.ap.channel = channel;
     ap.ap.authmode = WIFI_AUTH_OPEN;
-    ap.ap.max_connection = 2;
+    ap.ap.max_connection = 4;
     ap.ap.beacon_interval = 100;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+
+    esp_netif_ip_info_t ip{};
+    if (g_ap_netif != nullptr && esp_netif_get_ip_info(g_ap_netif, &ip) == ESP_OK) {
+        g_captive_dns.start(ip.ip.addr);
+        log.info("SoftAP %s  " IPSTR, kApSsid, IP2STR(&ip.ip));
+    }
 }
 
 } // namespace
@@ -252,14 +281,13 @@ extern "C" void app_main() {
     static lumos::DoorbellTransmitter tx;
     tx.load_nvs();
     const auto ch = tx.config().channel;
-    start_wifi_apsta(ch);
+    start_wifi_ap(ch);
+    g_tx = &tx;
+    start_http();
     auto started = tx.start();
     if (!started) {
         log.error("transmitter start failed: %s", started.error().message.c_str());
-        return;
     }
-    g_tx = &tx;
-    start_http();
     log.info("AP %s  ch=%u  this_mac=%s  http://192.168.4.1/", kApSsid,
              static_cast<unsigned>(tx.config().channel), tx.own_mac().c_str());
 }

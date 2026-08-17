@@ -141,7 +141,8 @@ void DoorbellTransmitter::test_send() {
 
 std::string DoorbellTransmitter::own_mac() const {
     std::uint8_t mac[6]{};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    // Setup AP + ESP-NOW both use the SoftAP interface.
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     return format_mac(mac);
 }
 
@@ -260,9 +261,6 @@ void DoorbellTransmitter::configure_wifi_channel() {
         ap.ap.channel = cfg_.channel;
         (void)esp_wifi_set_config(WIFI_IF_AP, &ap);
     }
-    if (esp_wifi_set_channel(cfg_.channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
-        log.warn("failed to lock Wi-Fi channel %u", static_cast<unsigned>(cfg_.channel));
-    }
 }
 
 void DoorbellTransmitter::add_peer() {
@@ -273,7 +271,7 @@ void DoorbellTransmitter::add_peer() {
     esp_now_peer_info_t peer{};
     std::memcpy(peer.peer_addr, cfg_.rx_mac, 6);
     peer.channel = cfg_.channel;
-    peer.ifidx = WIFI_IF_STA;
+    peer.ifidx = WIFI_IF_AP;
     peer.encrypt = false;
     if (esp_now_add_peer(&peer) != ESP_OK) {
         log.warn("esp_now_add_peer failed for %s", format_mac(cfg_.rx_mac).c_str());
