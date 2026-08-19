@@ -889,6 +889,9 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddBoolToObject(doorbell, "enabled", db.enabled);
     cJSON_AddBoolToObject(doorbell, "espnow_ready", db.espnow_ready);
     cJSON_AddBoolToObject(doorbell, "paired", db.paired);
+    cJSON_AddBoolToObject(doorbell, "pairing", db.pairing);
+    cJSON_AddStringToObject(doorbell, "paired_tx_mac", db.paired_tx_mac.c_str());
+    cJSON_AddStringToObject(doorbell, "own_mac", db.own_mac.c_str());
     cJSON_AddNumberToObject(doorbell, "relay_pin", db.relay_pin);
     cJSON_AddNumberToObject(doorbell, "last_ring_ms", db.last_ring_ms);
     char* printed = cJSON_PrintUnformatted(root);

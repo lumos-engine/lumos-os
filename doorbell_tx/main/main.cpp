@@ -77,6 +77,16 @@ button.secondary{background:transparent;color:var(--accent);border:1px solid var
 .row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:end}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
 pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem}
+.pair{display:flex;gap:.75rem;align-items:flex-start;padding:.9rem;border-radius:10px;border:1px solid var(--line);margin:0 0 .75rem}
+.pair .dot{width:.7rem;height:.7rem;border-radius:50%;margin-top:.28rem;flex:0 0 auto}
+.pair h3{margin:0;font-size:1.02rem;color:var(--text)}
+.pair p{margin:.25rem 0 0;font-size:.85rem}
+.pair.ok{border-color:#2f6f52;background:#102018}
+.pair.ok .dot{background:#3ecf8e}
+.pair.no{border-color:#7a5a28;background:#1c160e}
+.pair.no .dot{background:#e0a04a}
+.pair.wait{border-color:#2a5a7a;background:#101820}
+.pair.wait .dot{background:#6cb6ff}
 #staticFields{display:none}#staticFields.show{display:block}
 </style></head>
 <body>
@@ -84,6 +94,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <main>
 <section>
 <h2>Status</h2>
+<div id="pairCard" class="pair no"><div class="dot"></div><div><h3>LED board</h3><p>Loading pairing status…</p></div></div>
 <pre id="status">Loading…</pre>
 </section>
 <section>
@@ -150,6 +161,21 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <script>
 let pairTimer=null;
 function toggleStatic(){staticFields.classList.toggle('show', useStatic.checked);}
+function setPairCard(d){
+  const el=document.getElementById('pairCard');
+  const pairing=!!(d.pairing||d.scanning);
+  const mac=(d.rx_mac||'').trim();
+  const paired=!!d.paired && !!mac;
+  el.className='pair '+(pairing?'wait':(paired?'ok':'no'));
+  const title=pairing?'Pairing…':(paired?'Paired with LED board':'Not paired');
+  let detail;
+  if(pairing) detail='Searching for LumosOS. Tap Start pairing on the LED board /doorbell page.';
+  else if(paired){
+    const sent=d.last_send_ms>0?' Last ESP-NOW send this boot at '+d.last_send_ms+' ms.':' No press sent yet this boot — use Test send.';
+    detail='Receiver '+mac+'.'+sent;
+  } else detail='Same Wi‑Fi is not pairing. Start pairing on LumosOS /doorbell, then Find nearby here.';
+  el.innerHTML='<div class="dot"></div><div><h3>'+title+'</h3><p>'+detail+'</p></div>';
+}
 function renderPeers(d){
   const box=document.getElementById('peers');
   const list=d.peers||[];
@@ -173,6 +199,7 @@ async function load(){
   ip.value=d.wifi_ip||''; gateway.value=d.wifi_gateway||'';
   netmask.value=d.wifi_netmask||'255.255.255.0';
   dns1.value=d.wifi_dns1||''; dns2.value=d.wifi_dns2||'';
+  setPairCard(d);
   status.textContent=[
     'this_mac: '+(d.own_mac||'—'),
     'wifi: '+(d.wifi_connected?(d.wifi_ssid+'  '+d.sta_ip):('setup AP '+ (d.ap_ip||'192.168.4.1'))),
@@ -276,6 +303,7 @@ async function uploadOta(){
   ota.textContent=await r.text();
 }
 load(); scanWifi();
+setInterval(load,10000);
 </script>
 </body></html>
 )HTML";

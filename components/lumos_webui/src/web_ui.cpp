@@ -33,6 +33,16 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 .preview-wrap.cal-on{outline:1px solid #c9a227}
 .param{margin-top:.5rem}
 .advanced{opacity:.85}
+.pair{display:flex;gap:.75rem;align-items:flex-start;padding:.9rem;border-radius:10px;border:1px solid var(--line);margin:0 0 .75rem}
+.pair .dot{width:.7rem;height:.7rem;border-radius:50%;margin-top:.28rem;flex:0 0 auto}
+.pair h3{margin:0;font-size:1.02rem;color:var(--text)}
+.pair p{margin:.25rem 0 0;font-size:.85rem}
+.pair.ok{border-color:#2f6f52;background:#102018}
+.pair.ok .dot{background:#3ecf8e}
+.pair.no{border-color:#7a5a28;background:#1c160e}
+.pair.no .dot{background:#e0a04a}
+.pair.wait{border-color:#2a5a7a;background:#101820}
+.pair.wait .dot{background:#6cb6ff}
 </style>
 </head>
 <body>
@@ -50,6 +60,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </section>
 <section>
 <h2>Status</h2>
+<div id="pairCard" class="pair no"><div class="dot"></div><div><h3>Doorbell</h3><p>Loading pairing status…</p></div></div>
 <pre id="status">Loading…</pre>
 </section>
 <section>
@@ -283,8 +294,22 @@ function buildActiveToPhysicalLocal(physCount){
   }
   return map;
 }
+function setPairCard(el,d,peer){
+  if(!el) return;
+  const pairing=!!(d&&(d.pairing||d.scanning));
+  const mac=(peer||(d&&(d.paired_tx_mac||d.rx_mac))||'').trim();
+  const paired=!!(d&&d.paired&&mac);
+  el.className='pair '+(pairing?'wait':(paired?'ok':'no'));
+  const title=pairing?'Pairing…':(paired?'Paired with doorbell TX':'Doorbell not paired');
+  let detail;
+  if(pairing) detail='ESP-NOW discovery is running. Being on the same Wi‑Fi is not enough.';
+  else if(paired) detail='Transmitter '+mac+(d.enabled===false?' · receiver is disabled.':' · ESP-NOW link saved.');
+  else detail='Same Wi‑Fi does not pair the boards. Open /doorbell → Start pairing, then Find nearby on LumosOS-Bell.';
+  el.innerHTML='<div class="dot"></div><div><h3>'+title+'</h3><p>'+detail+'</p></div>';
+}
 function renderStatus(s){
   const view=Object.assign({},s); delete view.type;
+  setPairCard(document.getElementById('pairCard'), s.doorbell||{}, (s.doorbell&&s.doorbell.paired_tx_mac)||'');
   status.textContent=JSON.stringify(view,null,2);
   if(typeof s.brightness==='number') brightness.value=s.brightness;
   if(!ip.value && s.wifi && s.wifi.ip) ip.value=s.wifi.ip;
@@ -798,6 +823,16 @@ button.secondary{background:transparent;color:var(--accent);border:1px solid var
 pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem;color:var(--muted)}
 a{color:var(--accent);font-weight:600;text-decoration:none}
 .peer{display:block;text-align:left;margin-top:.5rem}
+.pair{display:flex;gap:.75rem;align-items:flex-start;padding:.9rem;border-radius:10px;border:1px solid var(--line);margin:0 0 .75rem}
+.pair .dot{width:.7rem;height:.7rem;border-radius:50%;margin-top:.28rem;flex:0 0 auto}
+.pair h3{margin:0;font-size:1.02rem;color:var(--text)}
+.pair p{margin:.25rem 0 0;font-size:.85rem}
+.pair.ok{border-color:#2f6f52;background:#102018}
+.pair.ok .dot{background:#3ecf8e}
+.pair.no{border-color:#7a5a28;background:#1c160e}
+.pair.no .dot{background:#e0a04a}
+.pair.wait{border-color:#2a5a7a;background:#101820}
+.pair.wait .dot{background:#6cb6ff}
 </style>
 </head>
 <body>
@@ -807,6 +842,11 @@ a{color:var(--accent);font-weight:600;text-decoration:none}
   <p><a href="/">← LumosOS / LEDs</a></p>
 </header>
 <main>
+<section>
+<h2>Pairing status</h2>
+<div id="pairCard" class="pair no"><div class="dot"></div><div><h3>Doorbell</h3><p>Loading…</p></div></div>
+<p class="hint">Same home Wi‑Fi is only for the web UI. Pairing is a separate ESP-NOW MAC link.</p>
+</section>
 <section>
 <h2>Pair nearby transmitter</h2>
 <p class="hint">On the doorbell TX, open the LumosOS-Bell page and tap <b>Find nearby</b> at the same time. Then tap the device here (or there). 60 seconds.</p>
@@ -839,6 +879,21 @@ a{color:var(--accent);font-weight:600;text-decoration:none}
 </main>
 <script>
 let pairTimer=null;
+function setPairCard(d){
+  const el=document.getElementById('pairCard');
+  const pairing=!!d.pairing;
+  const mac=(d.paired_tx_mac||'').trim();
+  const paired=!!d.paired && !!mac;
+  el.className='pair '+(pairing?'wait':(paired?'ok':'no'));
+  const title=pairing?'Pairing…':(paired?'Paired with transmitter':'Not paired');
+  let detail;
+  if(pairing) detail='Listening for LumosOS-Bell. Start Find nearby on the transmitter now.';
+  else if(paired){
+    const ring=d.last_ring_ms>0?' Last ring this boot at '+d.last_ring_ms+' ms.':' No ring yet this boot — use Test send on the transmitter.';
+    detail='Transmitter '+mac+'.'+(d.enabled?' Receiver enabled.':' Receiver disabled.')+ring;
+  } else detail='No transmitter MAC saved. Start pairing below, or paste the TX MAC in Settings.';
+  el.innerHTML='<div class="dot"></div><div><h3>'+title+'</h3><p>'+detail+'</p></div>';
+}
 function renderPeers(d){
   const box=document.getElementById('peers');
   const list=d.peers||[];
@@ -858,6 +913,7 @@ async function loadDoorbell(){
     activeHigh.checked=d.active_high!==false;
     pressMs.value=d.press_ms??400;
     txMac.value=d.paired_tx_mac||'';
+    setPairCard(d);
     status.textContent=[
       'own_mac: '+(d.own_mac||'—'),
       'wifi_channel: '+(d.wifi_channel??'—'),
