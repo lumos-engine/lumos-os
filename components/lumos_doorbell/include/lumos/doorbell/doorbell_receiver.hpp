@@ -18,6 +18,7 @@ struct DoorbellStatus {
     bool paired{false};
     int relay_pin{kDefaultRelayGpio};
     bool active_high{true};
+    bool tone{false};
     std::uint16_t press_ms{400};
     std::string paired_tx_mac;
     std::string own_mac;
@@ -55,6 +56,9 @@ private:
     void pulse_relay();
     void set_relay(bool active);
     void configure_gpio();
+    void ensure_tone(int pin);
+    void start_tone();
+    void stop_tone();
     void send_pair(std::uint8_t type, const std::uint8_t* dest);
     void ensure_broadcast_peer();
     bool pairing_active() const;
@@ -71,6 +75,7 @@ private:
     esp_timer_handle_t hello_timer_{nullptr};
     int configured_pin_{-1};
     bool relay_active_{false};
+    bool tone_ready_{false};
     bool have_last_seq_{false};
     std::uint8_t last_seq_{0};
     std::uint32_t last_ring_ms_{0};

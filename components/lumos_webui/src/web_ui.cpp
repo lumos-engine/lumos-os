@@ -861,9 +861,11 @@ a{color:var(--accent);font-weight:600;text-decoration:none}
 <input id="relayPin" type="number" min="4" max="33" value="17"/>
 <p class="hint">Default 17 (safe on ESP32-WROOM when LED data is on 16). Avoid 0/2/5/6–12/15 and input-only 34–39.</p>
 <label class="check"><input id="activeHigh" type="checkbox" checked/> Relay active-HIGH</label>
-<p class="hint">Uncheck for active-LOW relay modules.</p>
+<p class="hint">Uncheck for active-LOW / low-level trigger modules.</p>
+<label class="check"><input id="tone" type="checkbox"/> Buzzer tone (2.5 kHz PWM)</label>
+<p class="hint">Required for a piezo/buzzer on GPIO. Leave unchecked if you use a relay.</p>
 <label>Press duration (ms)</label>
-<input id="pressMs" type="number" min="100" max="2000" value="400"/>
+<input id="pressMs" type="number" min="100" max="4000" value="1500"/>
 <label>Paired transmitter MAC</label>
 <input id="txMac" placeholder="AA:BB:CC:DD:EE:FF"/>
 <p class="hint">Required if you skip pairing. Empty or invalid MAC = ignore all ESP-NOW doorbell packets.</p>
@@ -911,6 +913,7 @@ async function loadDoorbell(){
     enabled.checked=!!d.enabled;
     relayPin.value=d.relay_pin??17;
     activeHigh.checked=d.active_high!==false;
+    tone.checked=!!d.tone;
     pressMs.value=d.press_ms??400;
     txMac.value=d.paired_tx_mac||'';
     setPairCard(d);
@@ -922,6 +925,7 @@ async function loadDoorbell(){
       'paired: '+!!d.paired,
       'relay_pin: '+(d.relay_pin??'—'),
       'active_high: '+!!d.active_high,
+      'tone: '+!!d.tone,
       'press_ms: '+(d.press_ms??'—'),
       'paired_tx_mac: '+(d.paired_tx_mac||'(none)'),
       'last_ring_ms: '+(d.last_ring_ms||0),
@@ -957,7 +961,8 @@ async function saveDoorbell(){
       enabled:enabled.checked,
       relay_pin:Number(relayPin.value)||17,
       active_high:activeHigh.checked,
-      press_ms:Number(pressMs.value)||400,
+      tone:tone.checked,
+      press_ms:Number(pressMs.value)||1500,
       paired_tx_mac:(txMac.value||'').trim()
     };
     const r=await fetch('/api/v1/doorbell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

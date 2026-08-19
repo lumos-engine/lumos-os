@@ -5,6 +5,7 @@
 #include "lumos/core/logger.hpp"
 
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "esp_mac.h"
 #include "esp_now.h"
 #include "esp_timer.h"
@@ -20,8 +21,14 @@ namespace {
 Logger log{"doorbell"};
 
 constexpr std::uint16_t kMinPressMs = 100;
-constexpr std::uint16_t kMaxPressMs = 2000;
+constexpr std::uint16_t kMaxPressMs = 4000;
 constexpr std::uint64_t kHelloPeriodUs = 400 * 1000;
+constexpr ledc_mode_t kToneMode = LEDC_LOW_SPEED_MODE;
+constexpr ledc_timer_t kToneTimer = LEDC_TIMER_3;
+constexpr ledc_channel_t kToneChannel = LEDC_CHANNEL_7;
+constexpr std::uint32_t kToneHz = 2500;
+constexpr ledc_timer_bit_t kToneRes = LEDC_TIMER_10_BIT;
+constexpr std::uint32_t kToneDutyOn = 512; // 50%
 
 bool add_peer(const std::uint8_t mac[6], std::uint8_t channel, wifi_interface_t ifidx) {
     esp_now_del_peer(mac);
@@ -125,6 +132,7 @@ DoorbellStatus DoorbellReceiver::status() const {
     st.paired = paired_valid_;
     st.relay_pin = db.relay_pin;
     st.active_high = db.active_high;
+    st.tone = db.tone;
     st.press_ms = db.press_ms;
     st.paired_tx_mac = db.paired_tx_mac;
     std::uint8_t mac[6]{};
@@ -319,9 +327,66 @@ void DoorbellReceiver::set_relay(bool active) {
     if (!is_safe_output_gpio(pin)) {
         return;
     }
-    const int level = db.active_high ? (active ? 1 : 0) : (active ? 0 : 1);
-    gpio_set_level(static_cast<gpio_num_t>(pin), level);
+    if (db.tone) {
+        if (active) {
+            start_tone();
+        } else {
+            stop_tone();
+        }
+    } else {
+        const int level = db.active_high ? (active ? 1 : 0) : (active ? 0 : 1);
+        gpio_set_level(static_cast<gpio_num_t>(pin), level);
+    }
     relay_active_ = active;
+}
+
+void DoorbellReceiver::ensure_tone(int pin) {
+    ledc_timer_config_t timer{};
+    timer.speed_mode = kToneMode;
+    timer.duty_resolution = kToneRes;
+    timer.timer_num = kToneTimer;
+    timer.freq_hz = kToneHz;
+    timer.clk_cfg = LEDC_AUTO_CLK;
+    if (ledc_timer_config(&timer) != ESP_OK) {
+        log.error("buzzer LEDC timer failed");
+        tone_ready_ = false;
+        return;
+    }
+
+    ledc_channel_config_t ch{};
+    ch.gpio_num = pin;
+    ch.speed_mode = kToneMode;
+    ch.channel = kToneChannel;
+    ch.intr_type = LEDC_INTR_DISABLE;
+    ch.timer_sel = kToneTimer;
+    ch.duty = 0;
+    ch.hpoint = 0;
+    if (ledc_channel_config(&ch) != ESP_OK) {
+        log.error("buzzer LEDC channel failed");
+        tone_ready_ = false;
+        return;
+    }
+    tone_ready_ = true;
+}
+
+void DoorbellReceiver::start_tone() {
+    const int pin = configured_pin_ >= 0 ? configured_pin_ : preferences_.device().doorbell.relay_pin;
+    if (!tone_ready_) {
+        ensure_tone(pin);
+    }
+    if (!tone_ready_) {
+        return;
+    }
+    ledc_set_duty(kToneMode, kToneChannel, kToneDutyOn);
+    ledc_update_duty(kToneMode, kToneChannel);
+}
+
+void DoorbellReceiver::stop_tone() {
+    if (!tone_ready_) {
+        return;
+    }
+    const int idle = preferences_.device().doorbell.active_high ? 0 : 1;
+    ledc_stop(kToneMode, kToneChannel, idle);
 }
 
 void DoorbellReceiver::configure_gpio() {
@@ -332,7 +397,27 @@ void DoorbellReceiver::configure_gpio() {
     }
 
     if (configured_pin_ >= 0 && configured_pin_ != pin) {
+        if (tone_ready_) {
+            ledc_stop(kToneMode, kToneChannel, 0);
+            tone_ready_ = false;
+        }
         gpio_reset_pin(static_cast<gpio_num_t>(configured_pin_));
+    }
+
+    gpio_reset_pin(static_cast<gpio_num_t>(pin));
+    configured_pin_ = pin;
+
+    if (db.tone) {
+        ensure_tone(pin);
+        stop_tone();
+        relay_active_ = false;
+        return;
+    }
+
+    if (tone_ready_) {
+        ledc_stop(kToneMode, kToneChannel, 0);
+        tone_ready_ = false;
+        gpio_reset_pin(static_cast<gpio_num_t>(pin));
     }
 
     gpio_config_t io{};
@@ -342,7 +427,6 @@ void DoorbellReceiver::configure_gpio() {
     io.pull_down_en = GPIO_PULLDOWN_DISABLE;
     io.intr_type = GPIO_INTR_DISABLE;
     gpio_config(&io);
-    configured_pin_ = pin;
     set_relay(false);
 }
 

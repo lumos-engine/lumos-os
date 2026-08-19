@@ -30,6 +30,7 @@ struct DoorbellSettings {
     bool enabled{false};
     int relay_pin{kDefaultRelayGpio};
     bool active_high{true};
+    bool tone{false}; // PWM beep for a buzzer; leave off for a relay module
     std::uint16_t press_ms{400};
     std::string paired_tx_mac; // "AA:BB:CC:DD:EE:FF"; empty = unpaired (ignore all)
 };

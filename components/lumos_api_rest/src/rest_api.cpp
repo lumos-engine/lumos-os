@@ -391,6 +391,7 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON_AddBoolToObject(db, "enabled", d.doorbell.enabled);
     cJSON_AddNumberToObject(db, "relay_pin", d.doorbell.relay_pin);
     cJSON_AddBoolToObject(db, "active_high", d.doorbell.active_high);
+    cJSON_AddBoolToObject(db, "tone", d.doorbell.tone);
     cJSON_AddNumberToObject(db, "press_ms", d.doorbell.press_ms);
     cJSON_AddStringToObject(db, "paired_tx_mac", d.doorbell.paired_tx_mac.c_str());
     return root;
@@ -409,8 +410,11 @@ void apply_doorbell_settings(DoorbellSettings& db, const cJSON* obj) {
     if (const cJSON* v = cJSON_GetObjectItem(obj, "active_high"); cJSON_IsBool(v)) {
         db.active_high = cJSON_IsTrue(v);
     }
+    if (const cJSON* v = cJSON_GetObjectItem(obj, "tone"); cJSON_IsBool(v)) {
+        db.tone = cJSON_IsTrue(v);
+    }
     if (const cJSON* v = cJSON_GetObjectItem(obj, "press_ms"); cJSON_IsNumber(v)) {
-        db.press_ms = static_cast<std::uint16_t>(std::clamp(v->valueint, 100, 2000));
+        db.press_ms = static_cast<std::uint16_t>(std::clamp(v->valueint, 100, 4000));
     }
     if (const cJSON* v = cJSON_GetObjectItem(obj, "paired_tx_mac"); cJSON_IsString(v)) {
         db.paired_tx_mac = v->valuestring ? v->valuestring : "";
@@ -910,6 +914,7 @@ esp_err_t RestApi::get_doorbell(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "paired", st.paired);
     cJSON_AddNumberToObject(root, "relay_pin", st.relay_pin);
     cJSON_AddBoolToObject(root, "active_high", st.active_high);
+    cJSON_AddBoolToObject(root, "tone", st.tone);
     cJSON_AddNumberToObject(root, "press_ms", st.press_ms);
     cJSON_AddStringToObject(root, "paired_tx_mac", st.paired_tx_mac.c_str());
     cJSON_AddStringToObject(root, "own_mac", st.own_mac.c_str());

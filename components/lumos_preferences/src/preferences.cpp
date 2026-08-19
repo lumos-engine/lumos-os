@@ -209,6 +209,9 @@ Result<void> Preferences::load() {
     get_u8("db_ah", db_ah);
     device_.doorbell.active_high = db_ah != 0;
     get_u16("db_ms", device_.doorbell.press_ms);
+    std::uint8_t db_tone = device_.doorbell.tone ? 1 : 0;
+    get_u8("db_tone", db_tone);
+    device_.doorbell.tone = db_tone != 0;
     device_.doorbell.paired_tx_mac =
         nvs_get_str_key(handle, "db_mac", device_.doorbell.paired_tx_mac);
 
@@ -277,6 +280,7 @@ Result<void> Preferences::save() {
     nvs_set_i32(handle, "db_pin", device_.doorbell.relay_pin);
     nvs_set_u8(handle, "db_ah", device_.doorbell.active_high ? 1 : 0);
     nvs_set_u16(handle, "db_ms", device_.doorbell.press_ms);
+    nvs_set_u8(handle, "db_tone", device_.doorbell.tone ? 1 : 0);
     nvs_set_str_key(handle, "db_mac", device_.doorbell.paired_tx_mac);
     if (device_.ignored_leds.empty()) {
         nvs_erase_key(handle, "ign_leds");
