@@ -27,7 +27,7 @@ lumos::Logger log{"main"};
 httpd_handle_t start_http_server() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 40;
+    config.max_uri_handlers = 44;
     config.stack_size = 8192;
     config.lru_purge_enable = true;
 

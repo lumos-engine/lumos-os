@@ -155,7 +155,12 @@ std::string RestApi::build_leds_json(const Framebuffer& fb) {
 }
 
 RestApi* RestApi::from_req(httpd_req_t* req) {
-    return static_cast<RestApi*>(req->user_ctx);
+    auto* self = static_cast<RestApi*>(req->user_ctx);
+    // Real UI/API traffic holds setup-page presence. WLED /json probes do not.
+    if (self != nullptr && std::strncmp(req->uri, "/json", 5) != 0) {
+        self->wifi_.note_ui_activity();
+    }
+    return self;
 }
 
 esp_err_t RestApi::send_json(httpd_req_t* req, const char* json, int status) {
@@ -888,6 +893,9 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(w, "dns2", wifi.dns2.c_str());
     cJSON_AddStringToObject(w, "ssid", wifi.ssid.c_str());
     cJSON_AddNumberToObject(w, "mode", static_cast<int>(wifi.mode));
+    cJSON_AddBoolToObject(w, "has_saved_wifi", wifi.has_saved_wifi);
+    cJSON_AddBoolToObject(w, "setup_mode", wifi.setup_mode);
+    cJSON_AddBoolToObject(w, "auto_retry", wifi.auto_retry);
     const auto db = self->doorbell_.status();
     cJSON* doorbell = cJSON_AddObjectToObject(root, "doorbell");
     cJSON_AddBoolToObject(doorbell, "enabled", db.enabled);
@@ -1119,6 +1127,14 @@ esp_err_t RestApi::post_wifi(httpd_req_t* req) {
         return send_json(req, "{\"error\":\"invalid json\"}", 400);
     }
     auto& d = self->preferences_.device();
+    if (cJSON_IsTrue(cJSON_GetObjectItem(json, "forget"))) {
+        cJSON_Delete(json);
+        auto result = self->wifi_.forget_wifi();
+        if (!result) {
+            return send_json(req, "{\"error\":\"forget failed\"}", 400);
+        }
+        return send_json(req, "{\"ok\":true}");
+    }
     const cJSON* ssid = cJSON_GetObjectItem(json, "ssid");
     const cJSON* pass = cJSON_GetObjectItem(json, "password");
     if (!cJSON_IsString(ssid)) {
@@ -1156,6 +1172,21 @@ esp_err_t RestApi::post_wifi(httpd_req_t* req) {
     return send_json(req, "{\"ok\":true}");
 }
 
+esp_err_t RestApi::post_wifi_retry(httpd_req_t* req) {
+    auto* self = from_req(req);
+    auto result = self->wifi_.retry_saved();
+    if (!result) {
+        return send_json(req, "{\"error\":\"no saved wifi\"}", 400);
+    }
+    return send_json(req, "{\"ok\":true}");
+}
+
+esp_err_t RestApi::post_wifi_presence(httpd_req_t* req) {
+    auto* self = from_req(req);
+    self->wifi_.note_ui_activity();
+    return send_json(req, "{\"ok\":true}");
+}
+
 Result<void> RestApi::start(httpd_handle_t server) {
     server_ = server;
 
@@ -1173,6 +1204,11 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/leds", .method = HTTP_GET, .handler = get_leds, .user_ctx = this},
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
+        {.uri = "/api/v1/wifi/retry", .method = HTTP_POST, .handler = post_wifi_retry, .user_ctx = this},
+        {.uri = "/api/v1/wifi/presence",
+         .method = HTTP_POST,
+         .handler = post_wifi_presence,
+         .user_ctx = this},
         {.uri = "/api/v1/neighbors", .method = HTTP_GET, .handler = get_neighbors, .user_ctx = this},
         {.uri = "/api/v1/doorbell", .method = HTTP_GET, .handler = get_doorbell, .user_ctx = this},
         {.uri = "/api/v1/doorbell", .method = HTTP_POST, .handler = post_doorbell, .user_ctx = this},

@@ -4,7 +4,10 @@
 #include "lumos/preferences/preferences.hpp"
 #include "lumos/wifi/neighbor_info.hpp"
 
+#include "esp_timer.h"
+
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -28,6 +31,9 @@ struct WifiStatus {
     std::string dns2;
     std::string ssid;
     int rssi{0};
+    bool has_saved_wifi{false};
+    bool setup_mode{false};
+    bool auto_retry{false};
 };
 
 struct WifiNetwork {
@@ -46,6 +52,8 @@ public:
 
     Result<void> start();
     Result<void> connect_sta(const std::string& ssid, const std::string& password);
+    Result<void> retry_saved();
+    Result<void> forget_wifi();
     Result<void> start_ap(const std::string& ssid = "LumosOS-Setup");
     void stop();
 
@@ -56,6 +64,11 @@ public:
     void set_status_callback(StatusCallback cb) { status_cb_ = std::move(cb); }
     void on_got_ip();
     void on_sta_start();
+    void on_sta_disconnected();
+
+    void note_ui_activity();
+    bool ui_session_active() const;
+    static void note_ui_activity_global();
 
     // mDNS: LumosOS.local + HyperHDR/Hyperk-compatible discovery hints
     Result<void> start_mdns();
@@ -71,8 +84,16 @@ private:
     void ensure_netif();
     Result<void> start_sta_from_prefs();
     Result<void> apply_sta_ip_config();
+    Result<void> apply_sta_config_and_connect(bool keep_ap);
+    void enter_setup_ap();
+    void drop_ap_to_sta();
+    void begin_background_sta_attempt();
+    void arm_retry_timer();
+    void stop_retry_timer();
+    static void retry_timer_cb(void* arg);
     void refresh_neighbors();
     static std::string mdns_hostname_label(const std::string& hostname);
+    bool has_saved_ssid() const;
 
     Preferences& preferences_;
     WifiStatus status_{};
@@ -82,6 +103,13 @@ private:
     bool started_{false};
     std::atomic<bool> captive_dns_running_{false};
     std::atomic<bool> want_sta_connect_{false};
+    std::atomic<bool> setup_ap_active_{false};
+    std::atomic<bool> sta_up_{false};
+    std::atomic<bool> retry_in_flight_{false};
+    std::atomic<int> sta_fails_{0};
+    std::atomic<std::int64_t> last_ui_ms_{0};
+    esp_timer_handle_t retry_timer_{nullptr};
+    static WifiService* instance_;
     char mdns_leds_txt_[8]{"150"};
     char mdns_api_txt_[8]{"0.3"};
     char mdns_chipset_txt_[16]{"ws2815"};

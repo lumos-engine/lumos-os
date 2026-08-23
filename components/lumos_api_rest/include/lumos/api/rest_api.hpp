@@ -33,6 +33,8 @@ private:
     static esp_err_t get_leds(httpd_req_t* req);
     static esp_err_t get_wifi_scan(httpd_req_t* req);
     static esp_err_t post_wifi(httpd_req_t* req);
+    static esp_err_t post_wifi_retry(httpd_req_t* req);
+    static esp_err_t post_wifi_presence(httpd_req_t* req);
     static esp_err_t get_neighbors(httpd_req_t* req);
     static esp_err_t get_doorbell(httpd_req_t* req);
     static esp_err_t post_doorbell(httpd_req_t* req);

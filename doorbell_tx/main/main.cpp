@@ -2,7 +2,6 @@
 #include "lumos/doorbell/doorbell_mac.hpp"
 #include "lumos/doorbell/doorbell_transmitter.hpp"
 #include "lumos/ota/ota_service.hpp"
-#include "lumos/wifi/captive_dns.hpp"
 
 #include "cJSON.h"
 #include "esp_event.h"
@@ -10,6 +9,7 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +18,7 @@
 #include "nvs_flash.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -31,14 +32,22 @@ namespace {
 
 lumos::Logger log{"doorbell_tx_main"};
 lumos::DoorbellTransmitter* g_tx{nullptr};
-lumos::CaptiveDns g_captive_dns;
 lumos::OtaService g_ota;
 esp_netif_t* g_ap_netif{nullptr};
 esp_netif_t* g_sta_netif{nullptr};
 bool g_want_sta{false};
+bool g_setup_ap{false};
+bool g_sta_up{false};
+bool g_retry_in_flight{false};
 int g_sta_fails{0};
+std::atomic<std::int64_t> g_last_ui_ms{0};
+esp_timer_handle_t g_retry_timer{nullptr};
 std::string g_sta_ip;
 int g_sta_rssi{0};
+
+constexpr int kStaFailLimit = 5;
+constexpr std::uint64_t kBackgroundRetryUs = 30ULL * 1000ULL * 1000ULL;
+constexpr std::int64_t kUiPresenceHoldMs = 10000;
 
 constexpr const char* kApSsid = "LumosOS-Bell";
 constexpr const char* kWifiNs = "dbwifi";
@@ -121,6 +130,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   </div>
 </div>
 <button type="button" onclick="saveWifi()">Save &amp; Connect</button>
+<button id="retryWifiBtn" class="secondary" type="button" onclick="retryWifi()" style="display:none">Retry home Wi-Fi</button>
 <button class="secondary" type="button" onclick="forgetWifi()">Forget Wi-Fi (setup hotspot)</button>
 <pre id="wifiMsg"></pre>
 </section>
@@ -200,6 +210,8 @@ async function load(){
   netmask.value=d.wifi_netmask||'255.255.255.0';
   dns1.value=d.wifi_dns1||''; dns2.value=d.wifi_dns2||'';
   setPairCard(d);
+  const retryBtn=document.getElementById('retryWifiBtn');
+  if(retryBtn) retryBtn.style.display=(d.setup_mode && d.has_saved_wifi)?'block':'none';
   status.textContent=[
     'this_mac: '+(d.own_mac||'—'),
     'wifi: '+(d.wifi_connected?(d.wifi_ssid+'  '+d.sta_ip):('setup AP '+ (d.ap_ip||'192.168.4.1'))),
@@ -243,6 +255,15 @@ async function saveWifi(){
     alert('Connecting… then open http://lumosos-bell.local or the static IP. Setup hotspot will go away.');
   }catch(e){ wifiMsg.textContent='Failed: '+e.message; }
 }
+async function retryWifi(){
+  wifiMsg.textContent='Retrying saved home Wi-Fi…';
+  try{
+    const r=await fetch('/api/v1/wifi/retry',{method:'POST'});
+    const t=await r.text();
+    wifiMsg.textContent=r.ok?'Retrying saved home Wi-Fi… this page stays up if it fails.':t;
+  }catch(e){ wifiMsg.textContent='Retry failed: '+e.message; }
+}
+function pulsePresence(){ fetch('/api/v1/wifi/presence',{method:'POST'}).catch(()=>{}); }
 async function forgetWifi(){
   if(!confirm('Drop saved Wi-Fi and reopen LumosOS-Bell hotspot?')) return;
   await fetch('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({forget:true})});
@@ -303,6 +324,8 @@ async function uploadOta(){
   ota.textContent=await r.text();
 }
 load(); scanWifi();
+pulsePresence();
+setInterval(pulsePresence,3000);
 setInterval(load,10000);
 </script>
 </body></html>
@@ -442,28 +465,114 @@ esp_err_t apply_sta_ip_config() {
 }
 
 void start_ap_portal();
+void apply_sta_config_and_connect(bool keep_ap);
+void arm_retry_timer();
+void stop_retry_timer();
+void begin_background_sta_attempt();
 
-void connect_sta() {
-    g_captive_dns.stop();
-    g_want_sta = true;
-    g_sta_fails = 0;
+bool has_saved_wifi() {
+    return !g_wifi.ssid.empty();
+}
+
+void note_ui_activity() {
+    g_last_ui_ms = esp_timer_get_time() / 1000;
+}
+
+bool ui_session_active() {
+    const auto last = g_last_ui_ms.load();
+    if (last <= 0) {
+        return false;
+    }
+    return (esp_timer_get_time() / 1000 - last) < kUiPresenceHoldMs;
+}
+
+void retry_timer_cb(void*) {
+    begin_background_sta_attempt();
+}
+
+void stop_retry_timer() {
+    if (g_retry_timer != nullptr) {
+        esp_timer_stop(g_retry_timer);
+    }
+}
+
+void arm_retry_timer() {
+    if (g_retry_timer == nullptr) {
+        const esp_timer_create_args_t args{
+            .callback = &retry_timer_cb,
+            .arg = nullptr,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "wifi_retry",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&args, &g_retry_timer) != ESP_OK) {
+            log.error("wifi retry timer create failed");
+            return;
+        }
+    }
+    esp_timer_stop(g_retry_timer);
+    if (has_saved_wifi()) {
+        esp_timer_start_periodic(g_retry_timer, kBackgroundRetryUs);
+    }
+}
+
+void apply_sta_config_and_connect(bool keep_ap) {
     apply_hostname();
     wifi_config_t sta{};
     std::strncpy(reinterpret_cast<char*>(sta.sta.ssid), g_wifi.ssid.c_str(), sizeof(sta.sta.ssid) - 1);
     std::strncpy(reinterpret_cast<char*>(sta.sta.password), g_wifi.password.c_str(),
                  sizeof(sta.sta.password) - 1);
     sta.sta.threshold.authmode = g_wifi.password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    if (keep_ap || g_setup_ap) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        g_retry_in_flight = true;
+        g_want_sta = false;
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        g_want_sta = true;
+        g_retry_in_flight = false;
+    }
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta));
     (void)apply_sta_ip_config();
     ESP_ERROR_CHECK(esp_wifi_start());
     esp_wifi_set_ps(WIFI_PS_NONE);
     esp_wifi_connect();
-    log.info("Connecting STA to %s", g_wifi.ssid.c_str());
+    log.info("Connecting STA to %s%s", g_wifi.ssid.c_str(),
+             (keep_ap || g_setup_ap) ? " (keeping setup AP)" : "");
+}
+
+void connect_sta() {
+    g_sta_fails = 0;
+    apply_sta_config_and_connect(g_setup_ap);
+}
+
+void retry_saved() {
+    g_sta_fails = 0;
+    apply_sta_config_and_connect(true);
+}
+
+void begin_background_sta_attempt() {
+    if (!has_saved_wifi() || g_sta_up || !g_setup_ap || g_retry_in_flight || ui_session_active()) {
+        return;
+    }
+    log.info("Background STA retry %s", g_wifi.ssid.c_str());
+    apply_sta_config_and_connect(true);
+}
+
+void drop_ap_to_sta() {
+    g_setup_ap = false;
+    g_retry_in_flight = false;
+    g_want_sta = true;
+    stop_retry_timer();
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 void start_ap_portal() {
     g_want_sta = false;
+    g_retry_in_flight = false;
+    g_sta_up = false;
+    g_setup_ap = true;
     if (g_tx != nullptr) {
         g_tx->set_sta_linked(false);
     }
@@ -481,9 +590,10 @@ void start_ap_portal() {
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     esp_netif_ip_info_t ip{};
     if (g_ap_netif != nullptr && esp_netif_get_ip_info(g_ap_netif, &ip) == ESP_OK) {
-        g_captive_dns.start(ip.ip.addr);
-        log.info("SoftAP %s  " IPSTR, kApSsid, IP2STR(&ip.ip));
+        log.info("SoftAP %s  " IPSTR "%s", kApSsid, IP2STR(&ip.ip),
+                 has_saved_wifi() ? " (saved home Wi-Fi kept)" : "");
     }
+    arm_retry_timer();
 }
 
 void reboot_task(void*) {
@@ -493,22 +603,30 @@ void reboot_task(void*) {
 
 void wifi_event_handler(void*, esp_event_base_t base, std::int32_t id, void* data) {
     if (base == WIFI_EVENT) {
-        if (id == WIFI_EVENT_STA_START && g_want_sta) {
+        if (id == WIFI_EVENT_STA_START && g_want_sta && !g_setup_ap) {
             esp_wifi_connect();
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
             log.warn("STA disconnected");
+            g_sta_up = false;
             if (g_tx != nullptr) {
                 g_tx->set_sta_linked(false);
             }
             g_sta_ip.clear();
-            if (g_want_sta) {
-                ++g_sta_fails;
-                if (g_sta_fails >= 10) {
-                    log.warn("STA failed repeatedly — setup AP");
-                    start_ap_portal();
-                } else {
-                    esp_wifi_connect();
-                }
+            if (g_retry_in_flight) {
+                g_retry_in_flight = false;
+                log.info("STA retry missed — staying on setup AP");
+                return;
+            }
+            if (!g_want_sta || g_setup_ap) {
+                return;
+            }
+            ++g_sta_fails;
+            if (g_sta_fails >= kStaFailLimit) {
+                log.warn("STA failed %d times — setup AP (password kept)", g_sta_fails);
+                start_ap_portal();
+            } else {
+                log.info("STA retry %d/%d", g_sta_fails, kStaFailLimit);
+                esp_wifi_connect();
             }
         } else if (id == WIFI_EVENT_AP_STACONNECTED) {
             const auto* ev = static_cast<wifi_event_ap_staconnected_t*>(data);
@@ -516,6 +634,8 @@ void wifi_event_handler(void*, esp_event_base_t base, std::int32_t id, void* dat
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         g_sta_fails = 0;
+        g_sta_up = true;
+        g_retry_in_flight = false;
         const auto* ev = static_cast<ip_event_got_ip_t*>(data);
         char ip[16];
         esp_ip4addr_ntoa(&ev->ip_info.ip, ip, sizeof(ip));
@@ -523,6 +643,12 @@ void wifi_event_handler(void*, esp_event_base_t base, std::int32_t id, void* dat
         wifi_ap_record_t ap{};
         g_sta_rssi = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) ? ap.rssi : 0;
         log.info("Got IP %s", ip);
+        if (g_setup_ap) {
+            drop_ap_to_sta();
+        } else {
+            g_want_sta = true;
+            stop_retry_timer();
+        }
         start_mdns();
         if (g_tx != nullptr) {
             g_tx->set_sta_linked(true);
@@ -593,11 +719,13 @@ esp_err_t read_body(httpd_req_t* req, std::string& out) {
 }
 
 esp_err_t get_index(httpd_req_t* req) {
+    note_ui_activity();
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, kIndexHtml, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t get_api(httpd_req_t* req) {
+    note_ui_activity();
     cJSON* root = cJSON_CreateObject();
     if (g_tx != nullptr) {
         const auto st = g_tx->status();
@@ -638,10 +766,16 @@ esp_err_t get_api(httpd_req_t* req) {
     cJSON_AddNumberToObject(root, "rssi", g_sta_rssi);
     cJSON_AddStringToObject(root, "ap_ip", "192.168.4.1");
     cJSON_AddBoolToObject(root, "sta_linked", g_tx != nullptr && g_tx->sta_linked());
+    const bool setup_mode = g_setup_ap && !g_sta_up;
+    const bool saved = has_saved_wifi();
+    cJSON_AddBoolToObject(root, "has_saved_wifi", saved);
+    cJSON_AddBoolToObject(root, "setup_mode", setup_mode);
+    cJSON_AddBoolToObject(root, "auto_retry", saved && setup_mode && !ui_session_active());
     return send_cjson(req, root);
 }
 
 esp_err_t post_save(httpd_req_t* req) {
+    note_ui_activity();
     if (g_tx == nullptr) {
         return send_text(req, "not ready");
     }
@@ -671,6 +805,7 @@ esp_err_t post_save(httpd_req_t* req) {
 }
 
 esp_err_t post_test(httpd_req_t* req) {
+    note_ui_activity();
     if (g_tx == nullptr) {
         return send_text(req, "not ready");
     }
@@ -679,6 +814,7 @@ esp_err_t post_test(httpd_req_t* req) {
 }
 
 esp_err_t post_discover(httpd_req_t* req) {
+    note_ui_activity();
     if (g_tx == nullptr) {
         return send_text(req, "not ready");
     }
@@ -687,6 +823,7 @@ esp_err_t post_discover(httpd_req_t* req) {
 }
 
 esp_err_t post_pair(httpd_req_t* req) {
+    note_ui_activity();
     if (g_tx == nullptr) {
         return send_text(req, "not ready");
     }
@@ -708,6 +845,7 @@ esp_err_t post_pair(httpd_req_t* req) {
 }
 
 esp_err_t get_wifi_scan(httpd_req_t* req) {
+    note_ui_activity();
     wifi_mode_t mode = WIFI_MODE_NULL;
     esp_wifi_get_mode(&mode);
     if (mode == WIFI_MODE_AP) {
@@ -755,6 +893,7 @@ const char* json_str(const cJSON* obj, const char* key) {
 }
 
 esp_err_t post_wifi(httpd_req_t* req) {
+    note_ui_activity();
     std::string body;
     if (read_body(req, body) != ESP_OK) {
         return send_text(req, "{\"error\":\"bad body\"}", "application/json");
@@ -806,7 +945,42 @@ esp_err_t post_wifi(httpd_req_t* req) {
     return send_text(req, "{\"ok\":true}", "application/json");
 }
 
+esp_err_t post_wifi_retry(httpd_req_t* req) {
+    note_ui_activity();
+    if (!has_saved_wifi()) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return send_text(req, "{\"error\":\"no saved wifi\"}", "application/json");
+    }
+    retry_saved();
+    return send_text(req, "{\"ok\":true}", "application/json");
+}
+
+esp_err_t post_wifi_presence(httpd_req_t* req) {
+    note_ui_activity();
+    return send_text(req, "{\"ok\":true}", "application/json");
+}
+
+esp_err_t get_android_probe(httpd_req_t* req) {
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, nullptr, 0);
+}
+
+esp_err_t get_apple_probe(httpd_req_t* req) {
+    static constexpr const char* kSuccess =
+        "<!DOCTYPE HTML PUBLIC \"-//Apple//DTD HTML 3.2//EN\">"
+        "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, kSuccess, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t get_windows_probe(httpd_req_t* req) {
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Microsoft NCSI", HTTPD_RESP_USE_STRLEN);
+}
+
 esp_err_t get_config(httpd_req_t* req) {
+    note_ui_activity();
     const bool secrets = std::strstr(req->uri, "secrets=1") != nullptr;
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "product", "doorbell_tx");
@@ -835,6 +1009,7 @@ esp_err_t get_config(httpd_req_t* req) {
 }
 
 esp_err_t post_config(httpd_req_t* req) {
+    note_ui_activity();
     std::string body;
     if (read_body(req, body) != ESP_OK) {
         return send_text(req, "{\"error\":\"bad body\"}", "application/json");
@@ -902,16 +1077,15 @@ esp_err_t post_config(httpd_req_t* req) {
     return send_text(req, "{\"ok\":true,\"reboot\":true}", "application/json");
 }
 
-esp_err_t http_404_redirect(httpd_req_t* req, httpd_err_code_t) {
-    httpd_resp_set_status(req, "302 Temporary Redirect");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, "Redirect to the captive portal", HTTPD_RESP_USE_STRLEN);
+esp_err_t http_404(httpd_req_t* req, httpd_err_code_t) {
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Not Found", HTTPD_RESP_USE_STRLEN);
 }
 
 void start_http() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 28;
     config.max_open_sockets = 7;
     config.stack_size = 8192;
     config.lru_purge_enable = true;
@@ -929,13 +1103,22 @@ void start_http() {
         {.uri = "/pair", .method = HTTP_POST, .handler = post_pair, .user_ctx = nullptr},
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = nullptr},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = nullptr},
+        {.uri = "/api/v1/wifi/retry", .method = HTTP_POST, .handler = post_wifi_retry, .user_ctx = nullptr},
+        {.uri = "/api/v1/wifi/presence",
+         .method = HTTP_POST,
+         .handler = post_wifi_presence,
+         .user_ctx = nullptr},
         {.uri = "/api/v1/config", .method = HTTP_GET, .handler = get_config, .user_ctx = nullptr},
         {.uri = "/api/v1/config", .method = HTTP_POST, .handler = post_config, .user_ctx = nullptr},
+        {.uri = "/generate_204", .method = HTTP_GET, .handler = get_android_probe, .user_ctx = nullptr},
+        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = get_apple_probe, .user_ctx = nullptr},
+        {.uri = "/canonical.html", .method = HTTP_GET, .handler = get_apple_probe, .user_ctx = nullptr},
+        {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = get_windows_probe, .user_ctx = nullptr},
     };
     for (const auto& r : routes) {
         httpd_register_uri_handler(server, &r);
     }
-    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_redirect);
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404);
     if (!g_ota.start(server)) {
         log.error("OTA route failed");
     }

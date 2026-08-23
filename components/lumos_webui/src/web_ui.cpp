@@ -1,4 +1,5 @@
 #include "lumos/webui/web_ui.hpp"
+#include "lumos/wifi/wifi_service.hpp"
 
 namespace lumos {
 namespace {
@@ -85,6 +86,8 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   </div>
 </div>
 <button onclick="saveWifi()">Save &amp; Connect</button>
+<button id="retryWifiBtn" class="secondary" type="button" onclick="retryWifi()" style="display:none">Retry home Wi-Fi</button>
+<p id="wifiHint" class="hint"></p>
 </section>
 <section>
 <h2>Strip</h2>
@@ -317,6 +320,12 @@ function renderStatus(s){
   if((!netmask.value || netmask.value==='255.255.255.0') && s.wifi && s.wifi.netmask) netmask.value=s.wifi.netmask;
   if(!dns1.value && s.wifi && s.wifi.dns1) dns1.value=s.wifi.dns1;
   if(!dns2.value && s.wifi && s.wifi.dns2) dns2.value=s.wifi.dns2;
+  updateWifiRetryUi(s.wifi);
+}
+function updateWifiRetryUi(w){
+  const btn=document.getElementById('retryWifiBtn');
+  if(!btn) return;
+  btn.style.display=(w && w.setup_mode && w.has_saved_wifi)?'block':'none';
 }
 function hexToBytes(hex){
   const out=new Uint8Array(hex.length/2);
@@ -503,6 +512,14 @@ async function saveWifi(){
     alert('Connecting… then open '+(useStatic.checked?('http://'+ip.value.trim()):'http://lumosos.local (or your hostname)'));
   }catch(e){ alert('Connect failed: '+e.message); }
 }
+async function retryWifi(){
+  const hint=document.getElementById('wifiHint');
+  try{
+    await j('/api/v1/wifi/retry',{method:'POST'});
+    if(hint) hint.textContent='Retrying saved home Wi-Fi… this page stays up if it fails.';
+  }catch(e){ if(hint) hint.textContent='Retry failed: '+e.message; }
+}
+function pulsePresence(){ fetch('/api/v1/wifi/presence',{method:'POST'}).catch(()=>{}); }
 async function applyBalanceLive(){
   const body={
     balance_r:Math.max(0,Math.min(255,Number(balR.value)||255)),
@@ -795,6 +812,8 @@ showWiz();
 loadSettings(); refresh(); scanWifi(); drawPreview();
 neighbors.textContent='Click Refresh to scan for nearby LumosOS devices.';
 // No auto LED poll / WebSocket — both caused RMT flicker via Wi‑Fi. Status uses HTTP refresh.
+pulsePresence();
+setInterval(pulsePresence,3000);
 setInterval(refresh,15000);
 </script>
 </body>
@@ -982,6 +1001,8 @@ async function testRelay(){
 }
 loadDoorbell();
 setInterval(loadDoorbell,10000);
+fetch('/api/v1/wifi/presence',{method:'POST'}).catch(()=>{});
+setInterval(()=>fetch('/api/v1/wifi/presence',{method:'POST'}).catch(()=>{}),3000);
 </script>
 </body>
 </html>
@@ -990,29 +1011,44 @@ setInterval(loadDoorbell,10000);
 } // namespace
 
 esp_err_t WebUi::get_index(httpd_req_t* req) {
+    WifiService::note_ui_activity_global();
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, kIndexHtml, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t WebUi::get_doorbell(httpd_req_t* req) {
+    WifiService::note_ui_activity_global();
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, kDoorbellHtml, HTTPD_RESP_USE_STRLEN);
 }
 
-esp_err_t WebUi::get_captive(httpd_req_t* req) {
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
+esp_err_t WebUi::get_android_probe(httpd_req_t* req) {
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, nullptr, 0);
+}
+
+esp_err_t WebUi::get_apple_probe(httpd_req_t* req) {
+    static constexpr const char* kSuccess =
+        "<!DOCTYPE HTML PUBLIC \"-//Apple//DTD HTML 3.2//EN\">"
+        "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, kSuccess, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t WebUi::get_windows_probe(httpd_req_t* req) {
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Microsoft NCSI", HTTPD_RESP_USE_STRLEN);
 }
 
 Result<void> WebUi::start(httpd_handle_t server) {
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = get_index, .user_ctx = nullptr},
         {.uri = "/doorbell", .method = HTTP_GET, .handler = get_doorbell, .user_ctx = nullptr},
-        {.uri = "/generate_204", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},
-        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},
-        {.uri = "/canonical.html", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},
-        {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = get_captive, .user_ctx = nullptr},
+        {.uri = "/generate_204", .method = HTTP_GET, .handler = get_android_probe, .user_ctx = nullptr},
+        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = get_apple_probe, .user_ctx = nullptr},
+        {.uri = "/canonical.html", .method = HTTP_GET, .handler = get_apple_probe, .user_ctx = nullptr},
+        {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = get_windows_probe, .user_ctx = nullptr},
     };
     for (const auto& route : routes) {
         if (httpd_register_uri_handler(server, &route) != ESP_OK) {

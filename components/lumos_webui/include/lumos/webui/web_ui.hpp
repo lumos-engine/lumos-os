@@ -13,7 +13,9 @@ public:
 private:
     static esp_err_t get_index(httpd_req_t* req);
     static esp_err_t get_doorbell(httpd_req_t* req);
-    static esp_err_t get_captive(httpd_req_t* req);
+    static esp_err_t get_android_probe(httpd_req_t* req);
+    static esp_err_t get_apple_probe(httpd_req_t* req);
+    static esp_err_t get_windows_probe(httpd_req_t* req);
 };
 
 } // namespace lumos

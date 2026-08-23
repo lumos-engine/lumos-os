@@ -22,6 +22,10 @@ namespace {
 Logger log{"wifi"};
 std::unique_ptr<CaptiveDns> g_captive_dns;
 
+constexpr int kStaFailLimit = 5;
+constexpr std::uint64_t kBackgroundRetryUs = 30ULL * 1000ULL * 1000ULL;
+constexpr std::int64_t kUiPresenceHoldMs = 10000;
+
 void event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
     auto* self = static_cast<WifiService*>(arg);
     if (base == WIFI_EVENT) {
@@ -29,8 +33,7 @@ void event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
             self->on_sta_start();
         } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
             log.warn("STA disconnected");
-            // Reconnect only when we intentionally joined a network.
-            self->on_sta_start();
+            self->on_sta_disconnected();
         } else if (id == WIFI_EVENT_AP_START) {
             log.info("SoftAP started");
         }
@@ -40,6 +43,8 @@ void event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
 }
 
 } // namespace
+
+WifiService* WifiService::instance_ = nullptr;
 
 WifiService::WifiService(Preferences& preferences) : preferences_(preferences) {}
 
@@ -97,13 +102,105 @@ void WifiService::apply_hostname() {
 }
 
 void WifiService::on_sta_start() {
-    if (want_sta_connect_) {
+    if (want_sta_connect_ && !setup_ap_active_) {
         esp_wifi_connect();
     }
 }
 
+void WifiService::on_sta_disconnected() {
+    sta_up_ = false;
+    status_.connected = false;
+    if (retry_in_flight_) {
+        retry_in_flight_ = false;
+        log.info("STA retry missed — staying on setup AP");
+        return;
+    }
+    if (!want_sta_connect_ || setup_ap_active_) {
+        return;
+    }
+    const int fails = ++sta_fails_;
+    if (fails >= kStaFailLimit) {
+        log.warn("STA failed %d times — setup AP (password kept)", fails);
+        enter_setup_ap();
+        return;
+    }
+    log.info("STA retry %d/%d", fails, kStaFailLimit);
+    esp_wifi_connect();
+}
+
+bool WifiService::has_saved_ssid() const {
+    return !preferences_.device().wifi_ssid.empty();
+}
+
+void WifiService::note_ui_activity() {
+    last_ui_ms_ = esp_timer_get_time() / 1000;
+}
+
+void WifiService::note_ui_activity_global() {
+    if (instance_ != nullptr) {
+        instance_->note_ui_activity();
+    }
+}
+
+bool WifiService::ui_session_active() const {
+    const auto last = last_ui_ms_.load();
+    if (last <= 0) {
+        return false;
+    }
+    return (esp_timer_get_time() / 1000 - last) < kUiPresenceHoldMs;
+}
+
+void WifiService::retry_timer_cb(void* arg) {
+    auto* self = static_cast<WifiService*>(arg);
+    if (self == nullptr) {
+        return;
+    }
+    self->begin_background_sta_attempt();
+}
+
+void WifiService::arm_retry_timer() {
+    if (retry_timer_ == nullptr) {
+        const esp_timer_create_args_t args{
+            .callback = &WifiService::retry_timer_cb,
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "wifi_retry",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&args, &retry_timer_) != ESP_OK) {
+            log.error("wifi retry timer create failed");
+            return;
+        }
+    }
+    esp_timer_stop(retry_timer_);
+    if (has_saved_ssid()) {
+        esp_timer_start_periodic(retry_timer_, kBackgroundRetryUs);
+    }
+}
+
+void WifiService::stop_retry_timer() {
+    if (retry_timer_ != nullptr) {
+        esp_timer_stop(retry_timer_);
+    }
+}
+
+void WifiService::begin_background_sta_attempt() {
+    if (!has_saved_ssid() || sta_up_ || !setup_ap_active_) {
+        return;
+    }
+    if (ui_session_active()) {
+        return;
+    }
+    if (retry_in_flight_) {
+        return;
+    }
+    log.info("Background STA retry %s", preferences_.device().wifi_ssid.c_str());
+    (void)apply_sta_config_and_connect(true);
+}
+
 Result<void> WifiService::start() {
     ensure_netif();
+    instance_ = this;
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -113,7 +210,7 @@ Result<void> WifiService::start() {
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     started_ = true;
 
-    if (!preferences_.device().wifi_ssid.empty()) {
+    if (has_saved_ssid()) {
         auto result = start_sta_from_prefs();
         if (result) {
             return result;
@@ -195,12 +292,56 @@ Result<void> WifiService::apply_sta_ip_config() {
     return Result<void>::ok();
 }
 
+Result<void> WifiService::apply_sta_config_and_connect(bool keep_ap) {
+    const auto& d = preferences_.device();
+    wifi_config_t wifi_config{};
+    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), d.wifi_ssid.c_str(),
+                 sizeof(wifi_config.sta.ssid) - 1);
+    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), d.wifi_password.c_str(),
+                 sizeof(wifi_config.sta.password) - 1);
+    wifi_config.sta.threshold.authmode =
+        d.wifi_password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+
+    apply_hostname();
+    if (keep_ap || setup_ap_active_) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        retry_in_flight_ = true;
+        want_sta_connect_ = false;
+    } else {
+        if (g_captive_dns) {
+            g_captive_dns->stop();
+            g_captive_dns.reset();
+            captive_dns_running_ = false;
+        }
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        want_sta_connect_ = true;
+        retry_in_flight_ = false;
+    }
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+
+    auto ip_result = apply_sta_ip_config();
+    if (!ip_result) {
+        retry_in_flight_ = false;
+        log.error("IP config failed: %s", ip_result.error().message.c_str());
+        return ip_result;
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_connect();
+
+    status_.ssid = d.wifi_ssid;
+    status_.connected = false;
+    if (!keep_ap && !setup_ap_active_) {
+        status_.mode = WifiMode::Station;
+    }
+    log.info("Connecting STA to %s%s", d.wifi_ssid.c_str(),
+             (keep_ap || setup_ap_active_) ? " (keeping setup AP)" : "");
+    return Result<void>::ok();
+}
+
 Result<void> WifiService::connect_sta(const std::string& ssid, const std::string& password) {
     ensure_netif();
-    if (g_captive_dns) {
-        g_captive_dns->stop();
-        g_captive_dns.reset();
-    }
 
     // Empty password keeps the previously saved one (UI "leave blank to keep").
     std::string effective_password = password;
@@ -209,44 +350,64 @@ Result<void> WifiService::connect_sta(const std::string& ssid, const std::string
         effective_password = preferences_.device().wifi_password;
     }
 
-    wifi_config_t wifi_config{};
-    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), ssid.c_str(),
-                 sizeof(wifi_config.sta.ssid) - 1);
-    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password), effective_password.c_str(),
-                 sizeof(wifi_config.sta.password) - 1);
-    wifi_config.sta.threshold.authmode =
-        effective_password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
-
-    want_sta_connect_ = true;
-    apply_hostname();
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-
-    auto ip_result = apply_sta_ip_config();
-    if (!ip_result) {
-        log.error("IP config failed: %s", ip_result.error().message.c_str());
-        return ip_result;
-    }
-
-    ESP_ERROR_CHECK(esp_wifi_start());
-    // Modem-sleep PS pulses the radio on a ~beacon cadence and glitches RMT LED timing.
-    esp_wifi_set_ps(WIFI_PS_NONE);
-    esp_wifi_connect();
-
-    status_.mode = WifiMode::Station;
-    status_.ssid = ssid;
-    status_.connected = false;
     preferences_.device().wifi_ssid = ssid;
     preferences_.device().wifi_password = effective_password;
     preferences_.save();
+    sta_fails_ = 0;
 
-    log.info("Connecting STA to %s", ssid.c_str());
-    return Result<void>::ok();
+    const bool keep_ap = setup_ap_active_;
+    return apply_sta_config_and_connect(keep_ap);
+}
+
+Result<void> WifiService::retry_saved() {
+    if (!has_saved_ssid()) {
+        return Result<void>::fail(ErrorCode::InvalidArgument, "no saved wifi");
+    }
+    sta_fails_ = 0;
+    return apply_sta_config_and_connect(true);
+}
+
+Result<void> WifiService::forget_wifi() {
+    preferences_.device().wifi_ssid.clear();
+    preferences_.device().wifi_password.clear();
+    preferences_.save();
+    sta_fails_ = 0;
+    want_sta_connect_ = false;
+    retry_in_flight_ = false;
+    sta_up_ = false;
+    stop_retry_timer();
+    return start_ap();
+}
+
+void WifiService::enter_setup_ap() {
+    (void)start_ap();
+}
+
+void WifiService::drop_ap_to_sta() {
+    setup_ap_active_ = false;
+    retry_in_flight_ = false;
+    want_sta_connect_ = true;
+    stop_retry_timer();
+    if (g_captive_dns) {
+        g_captive_dns->stop();
+        g_captive_dns.reset();
+        captive_dns_running_ = false;
+    }
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 Result<void> WifiService::start_ap(const std::string& ssid) {
     ensure_netif();
     want_sta_connect_ = false;
+    retry_in_flight_ = false;
+    sta_up_ = false;
+    setup_ap_active_ = true;
+    if (g_captive_dns) {
+        g_captive_dns->stop();
+        g_captive_dns.reset();
+        captive_dns_running_ = false;
+    }
 
     wifi_config_t wifi_config{};
     std::strncpy(reinterpret_cast<char*>(wifi_config.ap.ssid), ssid.c_str(),
@@ -256,7 +417,6 @@ Result<void> WifiService::start_ap(const std::string& ssid) {
     wifi_config.ap.max_connection = 4;
     wifi_config.ap.authmode = WIFI_AUTH_OPEN;
 
-    // APSTA so we can scan nearby networks while the captive portal is up.
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -268,17 +428,16 @@ Result<void> WifiService::start_ap(const std::string& ssid) {
     char ip_str[16];
     esp_ip4addr_ntoa(&ip_info.ip, ip_str, sizeof(ip_str));
     status_.mode = WifiMode::AccessPoint;
-    status_.connected = true;
+    status_.connected = false;
     status_.ssid = ssid;
     status_.ip = ip_str;
 
-    g_captive_dns = std::make_unique<CaptiveDns>();
-    g_captive_dns->start(ip_info.ip.addr);
-    captive_dns_running_ = true;
+    arm_retry_timer();
 
-    log.info("AP %s at %s", ssid.c_str(), ip_str);
+    log.info("AP %s at %s%s", ssid.c_str(), ip_str,
+             has_saved_ssid() ? " (saved home Wi-Fi kept)" : "");
     if (status_cb_) {
-        status_cb_(status_);
+        status_cb_(status());
     }
     return Result<void>::ok();
 }
@@ -380,9 +539,18 @@ void WifiService::on_got_ip() {
     }
 
     log.info("Got IP: %s (gw %s)", ip_str, gw_str);
+    sta_fails_ = 0;
+    sta_up_ = true;
+    retry_in_flight_ = false;
+    if (setup_ap_active_) {
+        drop_ap_to_sta();
+    } else {
+        want_sta_connect_ = true;
+        stop_retry_timer();
+    }
     start_mdns();
     if (status_cb_) {
-        status_cb_(status_);
+        status_cb_(status());
     }
 }
 
@@ -515,11 +683,24 @@ std::vector<NeighborInfo> WifiService::neighbors(bool refresh) {
 }
 
 WifiStatus WifiService::status() const {
-    return status_;
+    WifiStatus s = status_;
+    s.has_saved_wifi = has_saved_ssid();
+    s.setup_mode = setup_ap_active_ && !sta_up_;
+    s.auto_retry = s.has_saved_wifi && s.setup_mode && !ui_session_active();
+    s.connected = sta_up_;
+    return s;
 }
 
 void WifiService::stop() {
     want_sta_connect_ = false;
+    stop_retry_timer();
+    if (retry_timer_ != nullptr) {
+        esp_timer_delete(retry_timer_);
+        retry_timer_ = nullptr;
+    }
+    if (instance_ == this) {
+        instance_ = nullptr;
+    }
     if (g_captive_dns) {
         g_captive_dns->stop();
         g_captive_dns.reset();
