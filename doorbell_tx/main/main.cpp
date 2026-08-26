@@ -673,7 +673,19 @@ void wifi_event_handler(void*, esp_event_base_t base, std::int32_t id, void* dat
             g_want_sta = true;
             stop_retry_timer();
         }
-        start_mdns();
+        static std::atomic<bool> mdns_started{false};
+        bool expected = false;
+        if (mdns_started.compare_exchange_strong(expected, true)) {
+            if (xTaskCreate(
+                    [](void*) {
+                        start_mdns();
+                        vTaskDelete(nullptr);
+                    },
+                    "wifi_mdns", 8192, nullptr, 5, nullptr) != pdPASS) {
+                mdns_started = false;
+                log.error("mdns task create failed");
+            }
+        }
         if (g_tx != nullptr) {
             g_tx->set_sta_linked(true);
         }

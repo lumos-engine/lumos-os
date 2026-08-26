@@ -9,6 +9,9 @@
 #include "esp_wifi.h"
 #include "mdns.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -39,6 +42,25 @@ void event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         self->on_got_ip();
+    }
+}
+
+// mdns_init + service_add is too heavy for the default event task (sys_evt).
+void mdns_worker(void* arg) {
+    auto* self = static_cast<WifiService*>(arg);
+    self->start_mdns();
+    vTaskDelete(nullptr);
+}
+
+void schedule_mdns(WifiService* self) {
+    static std::atomic<bool> started{false};
+    bool expected = false;
+    if (!started.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    if (xTaskCreate(&mdns_worker, "wifi_mdns", 8192, self, 5, nullptr) != pdPASS) {
+        started = false;
+        log.error("mdns task create failed");
     }
 }
 
@@ -548,9 +570,9 @@ void WifiService::on_got_ip() {
         want_sta_connect_ = true;
         stop_retry_timer();
     }
-    start_mdns();
+    schedule_mdns(this);
     if (status_cb_) {
-        status_cb_(status());
+        status_cb_(status_);
     }
 }
 
