@@ -688,6 +688,29 @@ WifiStatus WifiService::status() const {
     s.setup_mode = setup_ap_active_ && !sta_up_;
     s.auto_retry = s.has_saved_wifi && s.setup_mode && !ui_session_active();
     s.connected = sta_up_;
+
+    std::uint8_t mac[6]{};
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        char buf[18];
+        std::snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2],
+                      mac[3], mac[4], mac[5]);
+        s.mac = buf;
+    }
+
+    if (s.setup_mode && ap_netif_ != nullptr) {
+        esp_netif_ip_info_t ip_info{};
+        if (esp_netif_get_ip_info(static_cast<esp_netif_t*>(ap_netif_), &ip_info) == ESP_OK) {
+            char buf[16];
+            esp_ip4addr_ntoa(&ip_info.ip, buf, sizeof(buf));
+            s.ip = buf;
+            esp_ip4addr_ntoa(&ip_info.gw, buf, sizeof(buf));
+            s.gateway = buf;
+            esp_ip4addr_ntoa(&ip_info.netmask, buf, sizeof(buf));
+            s.netmask = buf;
+        }
+        s.dns1.clear();
+        s.dns2.clear();
+    }
     return s;
 }
 

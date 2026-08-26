@@ -83,6 +83,9 @@ button.secondary{background:transparent;color:var(--accent);border:1px solid var
 .check{display:flex;align-items:center;gap:.5rem;color:var(--text);margin:.6rem 0}
 .check input{width:auto}
 .hint{font-size:.8rem;color:var(--muted)}
+.kv{display:grid;grid-template-columns:7.5rem 1fr;gap:.2rem .75rem;margin:0 0 .9rem;font-size:.9rem}
+.kv dt{color:var(--muted);margin:0}
+.kv dd{margin:0;word-break:break-all;color:var(--text)}
 .row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:end}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
 pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem}
@@ -108,6 +111,16 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </section>
 <section>
 <h2>Wi-Fi</h2>
+<dl id="wifiNow" class="kv">
+  <dt>SSID</dt><dd id="wifiSsid">—</dd>
+  <dt>Status</dt><dd id="wifiStatus">—</dd>
+  <dt>Mode</dt><dd id="wifiMode">—</dd>
+  <dt>Current IP</dt><dd id="wifiIp">—</dd>
+  <dt>Gateway</dt><dd id="wifiGw">—</dd>
+  <dt>Netmask</dt><dd id="wifiMask">—</dd>
+  <dt>DNS</dt><dd id="wifiDns">—</dd>
+  <dt>ESP MAC</dt><dd id="wifiMac">—</dd>
+</dl>
 <p class="hint">Connect this bell to the same router as the LED board. After that, use <b>http://lumosos-bell.local</b> (or the static IP) from your phone — no hotspot needed.</p>
 <label>Nearby networks</label>
 <div class="row">
@@ -212,6 +225,17 @@ async function load(){
   setPairCard(d);
   const retryBtn=document.getElementById('retryWifiBtn');
   if(retryBtn) retryBtn.style.display=(d.setup_mode && d.has_saved_wifi)?'block':'none';
+  const dash=v=>(v==null||v==='')?'—':v;
+  const connected=!!d.wifi_connected;
+  const setup=!!d.setup_mode;
+  document.getElementById('wifiSsid').textContent=dash(connected?d.wifi_ssid:(setup?'LumosOS-Bell':d.wifi_ssid));
+  document.getElementById('wifiStatus').textContent=connected?'Connected':(setup?'Setup AP':'Disconnected');
+  document.getElementById('wifiMode').textContent=connected?'sta':(setup?'ap':'—');
+  document.getElementById('wifiIp').textContent=dash(connected?d.sta_ip:(setup?(d.ap_ip||'192.168.4.1'):''));
+  document.getElementById('wifiGw').textContent=dash(d.sta_gateway);
+  document.getElementById('wifiMask').textContent=dash(d.sta_netmask);
+  document.getElementById('wifiDns').textContent=dash(d.sta_dns);
+  document.getElementById('wifiMac').textContent=dash(d.own_mac);
   status.textContent=[
     'this_mac: '+(d.own_mac||'—'),
     'wifi: '+(d.wifi_connected?(d.wifi_ssid+'  '+d.sta_ip):('setup AP '+ (d.ap_ip||'192.168.4.1'))),
@@ -763,10 +787,36 @@ esp_err_t get_api(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "wifi_dns2", g_wifi.dns2.c_str());
     cJSON_AddBoolToObject(root, "wifi_connected", !g_sta_ip.empty());
     cJSON_AddStringToObject(root, "sta_ip", g_sta_ip.c_str());
+    std::string live_gw;
+    std::string live_mask;
+    std::string live_dns;
+    const bool setup_mode = g_setup_ap && !g_sta_up;
+    esp_netif_t* netif = !g_sta_ip.empty() ? g_sta_netif : (setup_mode ? g_ap_netif : nullptr);
+    if (netif != nullptr) {
+        esp_netif_ip_info_t ip_info{};
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            char buf[16];
+            esp_ip4addr_ntoa(&ip_info.gw, buf, sizeof(buf));
+            live_gw = buf;
+            esp_ip4addr_ntoa(&ip_info.netmask, buf, sizeof(buf));
+            live_mask = buf;
+        }
+        if (!g_sta_ip.empty()) {
+            esp_netif_dns_info_t dns_main{};
+            if (esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_main) == ESP_OK &&
+                dns_main.ip.type == ESP_IPADDR_TYPE_V4) {
+                char buf[16];
+                esp_ip4addr_ntoa(&dns_main.ip.u_addr.ip4, buf, sizeof(buf));
+                live_dns = buf;
+            }
+        }
+    }
+    cJSON_AddStringToObject(root, "sta_gateway", live_gw.c_str());
+    cJSON_AddStringToObject(root, "sta_netmask", live_mask.c_str());
+    cJSON_AddStringToObject(root, "sta_dns", live_dns.c_str());
     cJSON_AddNumberToObject(root, "rssi", g_sta_rssi);
     cJSON_AddStringToObject(root, "ap_ip", "192.168.4.1");
     cJSON_AddBoolToObject(root, "sta_linked", g_tx != nullptr && g_tx->sta_linked());
-    const bool setup_mode = g_setup_ap && !g_sta_up;
     const bool saved = has_saved_wifi();
     cJSON_AddBoolToObject(root, "has_saved_wifi", saved);
     cJSON_AddBoolToObject(root, "setup_mode", setup_mode);

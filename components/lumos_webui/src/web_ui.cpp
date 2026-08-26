@@ -29,6 +29,9 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 .check input{width:auto}
 #staticFields{display:none}
 #staticFields.show{display:block}
+.kv{display:grid;grid-template-columns:7.5rem 1fr;gap:.2rem .75rem;margin:0 0 .9rem;font-size:.9rem}
+.kv dt{color:var(--muted);margin:0}
+.kv dd{margin:0;word-break:break-all}
 .preview-wrap{position:relative;width:100%;aspect-ratio:16/9;background:#07090d;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
 .preview-wrap canvas{display:block;width:100%;height:100%;cursor:crosshair}
 .preview-wrap.cal-on{outline:1px solid #c9a227}
@@ -66,6 +69,16 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </section>
 <section>
 <h2>WiFi</h2>
+<dl id="wifiNow" class="kv">
+  <dt>SSID</dt><dd id="wifiSsid">—</dd>
+  <dt>Status</dt><dd id="wifiStatus">—</dd>
+  <dt>Mode</dt><dd id="wifiMode">—</dd>
+  <dt>Current IP</dt><dd id="wifiIp">—</dd>
+  <dt>Gateway</dt><dd id="wifiGw">—</dd>
+  <dt>Netmask</dt><dd id="wifiMask">—</dd>
+  <dt>DNS</dt><dd id="wifiDns">—</dd>
+  <dt>ESP MAC</dt><dd id="wifiMac">—</dd>
+</dl>
 <label>Nearby networks</label>
 <div class="row">
   <select id="netlist"><option value="">Scanning…</option></select>
@@ -321,6 +334,22 @@ function renderStatus(s){
   if(!dns1.value && s.wifi && s.wifi.dns1) dns1.value=s.wifi.dns1;
   if(!dns2.value && s.wifi && s.wifi.dns2) dns2.value=s.wifi.dns2;
   updateWifiRetryUi(s.wifi);
+  renderWifiNow(s.wifi);
+}
+function dash(v){ return (v==null || v==='')?'—':v; }
+function renderWifiNow(w){
+  if(!w) return;
+  const setup=!!w.setup_mode;
+  const connected=!!w.connected;
+  document.getElementById('wifiSsid').textContent=dash(w.ssid);
+  document.getElementById('wifiStatus').textContent=connected?'Connected':(setup?'Setup AP':'Disconnected');
+  document.getElementById('wifiMode').textContent=connected?'sta':(setup?'ap':'—');
+  document.getElementById('wifiIp').textContent=dash(w.ip);
+  document.getElementById('wifiGw').textContent=dash(w.gateway);
+  document.getElementById('wifiMask').textContent=dash(w.netmask);
+  const dns=[w.dns1,w.dns2].filter(Boolean).join(', ');
+  document.getElementById('wifiDns').textContent=dash(dns);
+  document.getElementById('wifiMac').textContent=dash(w.mac);
 }
 function updateWifiRetryUi(w){
   const btn=document.getElementById('retryWifiBtn');

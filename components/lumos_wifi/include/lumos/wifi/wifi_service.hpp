@@ -30,6 +30,7 @@ struct WifiStatus {
     std::string dns1;
     std::string dns2;
     std::string ssid;
+    std::string mac;
     int rssi{0};
     bool has_saved_wifi{false};
     bool setup_mode{false};

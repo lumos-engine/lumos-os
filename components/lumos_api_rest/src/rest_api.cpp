@@ -892,6 +892,7 @@ esp_err_t RestApi::get_status(httpd_req_t* req) {
     cJSON_AddStringToObject(w, "dns1", wifi.dns1.c_str());
     cJSON_AddStringToObject(w, "dns2", wifi.dns2.c_str());
     cJSON_AddStringToObject(w, "ssid", wifi.ssid.c_str());
+    cJSON_AddStringToObject(w, "mac", wifi.mac.c_str());
     cJSON_AddNumberToObject(w, "mode", static_cast<int>(wifi.mode));
     cJSON_AddBoolToObject(w, "has_saved_wifi", wifi.has_saved_wifi);
     cJSON_AddBoolToObject(w, "setup_mode", wifi.setup_mode);
