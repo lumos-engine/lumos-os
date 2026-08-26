@@ -210,7 +210,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <label>Plugin</label><select id="plugin" onchange="renderPluginParams()"></select>
 <div id="pluginParams"></div>
 <label>Brightness (0–255)</label><input id="brightness" type="number" min="0" max="255"/>
-<p class="hint" id="lightingHint">Apply to set plugin/brightness. HyperHDR cannot override while a non‑HyperHDR plugin is active.</p>
+<p class="hint" id="lightingHint">Apply to set plugin/brightness. HyperHDR and Lumos Vision cannot override while a local plugin is active.</p>
 <label>Channel balance R / G / B (255 = unity)</label>
 <div class="grid4">
   <input id="balR" type="number" min="0" max="255" value="255" title="Red gain"/>
@@ -350,6 +350,7 @@ function renderWifiNow(w){
   const dns=[w.dns1,w.dns2].filter(Boolean).join(', ');
   document.getElementById('wifiDns').textContent=dash(dns);
   document.getElementById('wifiMac').textContent=dash(w.mac);
+  updateLightingHint();
 }
 function updateWifiRetryUi(w){
   const btn=document.getElementById('retryWifiBtn');
@@ -461,7 +462,23 @@ async function loadSettings(){
     drawPreview();
   }catch{}
 }
+function updateLightingHint(){
+  if(!lightingHint) return;
+  const id=plugin.value;
+  if(id==='hyperhdr'){
+    lightingHint.textContent='HyperHDR active — stream can take over lighting.';
+    return;
+  }
+  if(id==='lumos_vision'){
+    const ipEl=document.getElementById('wifiIp');
+    const ip=(ipEl&&ipEl.textContent&&ipEl.textContent!=='—')?ipEl.textContent:'this box IP';
+    lightingHint.textContent='Lumos Vision Direct DDP — host '+ip+', UDP 4048. One RGB per LED; no HyperHDR in the path.';
+    return;
+  }
+  lightingHint.textContent='Local control on — HyperHDR WLED and Lumos Vision output-switch will not steal plugin/brightness. Select HyperHDR or Lumos Vision + Apply to hand back.';
+}
 function renderPluginParams(){
+  updateLightingHint();
   const box=pluginParams; box.innerHTML='';
   const plug=pluginsCache.find(p=>p.id===plugin.value);
   if(!plug || !plug.parameters) return;
@@ -505,8 +522,9 @@ async function refreshPlugins(){
     sel.appendChild(o);
   }
   renderPluginParams();
+  updateLightingHint();
 }
-plugin.addEventListener('change',()=>{ pluginDirty=true; });
+plugin.addEventListener('change',()=>{ pluginDirty=true; updateLightingHint(); });
 async function refresh(){
   try{
     if(!wsLive){ renderStatus(await j('/api/v1/status')); }
@@ -601,11 +619,7 @@ async function applyLighting(){
     }
     await j('/api/v1/plugin/'+plugin.value,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
     pluginDirty=false;
-    if(lightingHint){
-      lightingHint.textContent=plugin.value==='hyperhdr'
-        ? 'HyperHDR active — stream can take over lighting.'
-        : 'Local control on — HyperHDR WLED pushes will not steal plugin/brightness. Select HyperHDR + Apply to hand back.';
-    }
+    updateLightingHint();
     refresh();
   }catch(e){ alert('Apply failed: '+e.message); }
 }

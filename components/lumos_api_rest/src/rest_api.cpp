@@ -23,6 +23,35 @@
 namespace lumos {
 namespace {
 
+bool is_stream_owner_id(const std::string& id) {
+    return id == "hyperhdr" || id == "lumos_vision";
+}
+
+bool is_stream_owner_id(const char* id) {
+    return id != nullptr && (std::strcmp(id, "hyperhdr") == 0 || std::strcmp(id, "lumos_vision") == 0);
+}
+
+bool vision_output_switch_allowed(const PluginManager& plugins, bool local_override) {
+    if (is_stream_owner_id(plugins.active_id())) {
+        return true;
+    }
+    return plugins.in_fallback() && !local_override;
+}
+
+const char* http_status_phrase(int status) {
+    switch (status) {
+    case 200:
+        return "200 OK";
+    case 404:
+        return "404 Not Found";
+    case 409:
+        return "409 Conflict";
+    case 400:
+    default:
+        return "400 Bad Request";
+    }
+}
+
 const char* category_to_string(PluginCategory c) {
     switch (c) {
     case PluginCategory::Solid:
@@ -164,7 +193,7 @@ RestApi* RestApi::from_req(httpd_req_t* req) {
 }
 
 esp_err_t RestApi::send_json(httpd_req_t* req, const char* json, int status) {
-    httpd_resp_set_status(req, status == 200 ? "200 OK" : (status == 404 ? "404 Not Found" : "400 Bad Request"));
+    httpd_resp_set_status(req, http_status_phrase(status));
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
@@ -195,6 +224,7 @@ esp_err_t RestApi::get_root(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "api", kApiVersion.data());
     cJSON* links = cJSON_AddObjectToObject(root, "links");
     cJSON_AddStringToObject(links, "plugins", "/api/v1/plugins");
+    cJSON_AddStringToObject(links, "vision_output", "/api/v1/vision/output");
     cJSON_AddStringToObject(links, "settings", "/api/v1/settings");
     cJSON_AddStringToObject(links, "config", "/api/v1/config");
     cJSON_AddStringToObject(links, "status", "/api/v1/status");
@@ -299,9 +329,70 @@ esp_err_t RestApi::post_plugin(httpd_req_t* req) {
     if (!result) {
         return send_json(req, "{\"error\":\"activate failed\"}", 400);
     }
-    // UI/API plugin changes win over HyperHDR WLED state pushes — unless choosing HyperHDR.
-    self->local_override_ = (std::strcmp(id, "hyperhdr") != 0 && std::strcmp(id, "calibration") != 0);
+    // UI/API plugin changes win over HyperHDR WLED / Vision output-switch — unless
+    // choosing a stream owner (hyperhdr, lumos_vision) or calibration.
+    self->local_override_ = (!is_stream_owner_id(id) && std::strcmp(id, "calibration") != 0);
     return send_json(req, "{\"ok\":true}");
+}
+
+esp_err_t RestApi::post_vision_output(httpd_req_t* req) {
+    auto* self = from_req(req);
+    std::string body;
+    if (read_body(req, body) != ESP_OK) {
+        return send_json(req, "{\"error\":\"bad body\"}", 400);
+    }
+    cJSON* json = cJSON_Parse(body.c_str());
+    if (json == nullptr) {
+        return send_json(req, "{\"error\":\"invalid json\"}", 400);
+    }
+    const cJSON* mode = cJSON_GetObjectItem(json, "mode");
+    if (!cJSON_IsString(mode) || mode->valuestring == nullptr) {
+        cJSON_Delete(json);
+        return send_json(req, "{\"error\":\"mode required\"}", 400);
+    }
+
+    const char* target = nullptr;
+    if (std::strcmp(mode->valuestring, "ddp") == 0) {
+        target = "lumos_vision";
+    } else if (std::strcmp(mode->valuestring, "hyperhdr") == 0) {
+        target = "hyperhdr";
+    }
+    cJSON_Delete(json);
+    if (target == nullptr) {
+        return send_json(req, "{\"error\":\"invalid mode\"}", 400);
+    }
+
+    if (!vision_output_switch_allowed(self->plugins_, self->local_override_)) {
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddBoolToObject(root, "ok", false);
+        cJSON_AddStringToObject(root, "error", "plugin_not_selected");
+        cJSON_AddStringToObject(root, "active_plugin", self->plugins_.active_id().c_str());
+        char* printed = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
+        const esp_err_t err = send_json(req, printed, 409);
+        cJSON_free(printed);
+        return err;
+    }
+
+    const bool switched = self->plugins_.active_id() != target;
+    self->plugins_.clear_fallback_flag();
+    self->local_override_ = false;
+    if (switched) {
+        auto result = self->plugins_.activate(target);
+        if (!result) {
+            return send_json(req, "{\"error\":\"activate failed\"}", 400);
+        }
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddBoolToObject(root, "switched", switched);
+    cJSON_AddStringToObject(root, "active_plugin", self->plugins_.active_id().c_str());
+    char* printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    const esp_err_t err = send_json(req, printed);
+    cJSON_free(printed);
+    return err;
 }
 
 esp_err_t RestApi::post_brightness(httpd_req_t* req) {
@@ -323,8 +414,9 @@ esp_err_t RestApi::post_brightness(httpd_req_t* req) {
     self->preferences_.device().brightness = value;
     self->renderer_.set_brightness(value);
     self->preferences_.save();
-    // Keep HyperHDR from immediately restoring bri via /json/state.
-    if (self->plugins_.active_id() != "hyperhdr") {
+    // Keep HyperHDR /json/state from immediately restoring bri — not while a stream
+    // owner (hyperhdr / lumos_vision) is driving the strip.
+    if (!is_stream_owner_id(self->plugins_.active_id())) {
         self->local_override_ = true;
     }
     cJSON_Delete(json);
@@ -1196,6 +1288,10 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/plugins", .method = HTTP_GET, .handler = get_plugins, .user_ctx = this},
         {.uri = "/api/v1/plugin/*", .method = HTTP_GET, .handler = get_plugin, .user_ctx = this},
         {.uri = "/api/v1/plugin/*", .method = HTTP_POST, .handler = post_plugin, .user_ctx = this},
+        {.uri = "/api/v1/vision/output",
+         .method = HTTP_POST,
+         .handler = post_vision_output,
+         .user_ctx = this},
         {.uri = "/api/v1/brightness", .method = HTTP_POST, .handler = post_brightness, .user_ctx = this},
         {.uri = "/api/v1/settings", .method = HTTP_GET, .handler = get_settings, .user_ctx = this},
         {.uri = "/api/v1/settings", .method = HTTP_POST, .handler = post_settings, .user_ctx = this},

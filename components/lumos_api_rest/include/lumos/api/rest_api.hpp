@@ -24,6 +24,7 @@ private:
     static esp_err_t get_plugins(httpd_req_t* req);
     static esp_err_t get_plugin(httpd_req_t* req);
     static esp_err_t post_plugin(httpd_req_t* req);
+    static esp_err_t post_vision_output(httpd_req_t* req);
     static esp_err_t post_brightness(httpd_req_t* req);
     static esp_err_t get_settings(httpd_req_t* req);
     static esp_err_t post_settings(httpd_req_t* req);
@@ -58,8 +59,9 @@ private:
     httpd_handle_t server_{nullptr};
     bool wled_on_{true};
     bool wled_live_{false};
-    // When true, LumosOS UI/API owns plugin+brightness; HyperHDR /json/state cannot steal them.
-    // Cleared when the user explicitly activates the hyperhdr plugin.
+    // When true, LumosOS UI/API owns plugin+brightness; HyperHDR /json/state and
+    // Vision output-switch cannot steal them. Cleared when the user activates
+    // hyperhdr or lumos_vision (stream owners).
     bool local_override_{false};
 };
 

@@ -6,6 +6,7 @@ idf_component_register(
         "src/bias_plugin.cpp"
         "src/rainbow_plugin.cpp"
         "src/hyperhdr_plugin.cpp"
+        "src/lumos_vision_plugin.cpp"
         "src/aurora_plugin.cpp"
         "src/fire_plugin.cpp"
         "src/twinkle_plugin.cpp"
