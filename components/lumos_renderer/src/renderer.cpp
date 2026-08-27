@@ -135,4 +135,27 @@ Result<void> Renderer::present(const Framebuffer& framebuffer) {
     return driver_.show(scratch_rgb_);
 }
 
+Result<void> Renderer::present_rgbw(std::span<const Rgbw> pixels) {
+    if (!color_.is_rgbw()) {
+        scratch_rgb_.assign(led_count_, Rgb::black());
+        const LedIndex n = std::min(static_cast<LedIndex>(pixels.size()), led_count_);
+        for (LedIndex i = 0; i < n; ++i) {
+            scratch_rgb_[i] = scale_rgbw_to_rgb_preview(pixels[i]);
+        }
+        Framebuffer fb(led_count_);
+        fb.data() = scratch_rgb_;
+        return present(fb);
+    }
+    color_.process_passthrough_rgbw(pixels, scratch_rgbw_);
+    if (scratch_rgbw_.size() < led_count_) {
+        scratch_rgbw_.resize(led_count_, Rgbw::black());
+    } else if (scratch_rgbw_.size() > led_count_) {
+        scratch_rgbw_.resize(led_count_);
+    }
+    apply_ignore_to_rgbw();
+    last_power_scale_ = power_.apply(scratch_rgbw_);
+    apply_ignore_to_rgbw();
+    return driver_.show_rgbw(scratch_rgbw_);
+}
+
 } // namespace lumos

@@ -9,6 +9,7 @@
 #include "lumos/renderer/power_limiter.hpp"
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace lumos {
@@ -50,6 +51,8 @@ public:
     // Owns presentation: ColorProcessor → physical ignore → power → driver.
     // Framebuffer is physical wire order.
     Result<void> present(const Framebuffer& framebuffer);
+    // Lumos Vision Direct: already RGBW. Skip gamma and ExtractMin.
+    Result<void> present_rgbw(std::span<const Rgbw> pixels);
 
     float last_power_scale() const { return last_power_scale_; }
     bool is_rgbw() const { return color_.is_rgbw(); }

@@ -26,12 +26,15 @@ public:
         if (active_count_ == 0) {
             active_count_ = prefs_ ? prefs_->device().led_count : kDefaultLedCount;
         }
-        frame_.assign(active_count_, Rgb::black());
+        frame_.assign(active_count_, Rgbw::black());
+        physical_.clear();
         has_frame_ = false;
         last_frame_us_ = 0;
         waiting_ = true;
 
-        auto result = transport_->start(active_count_, [this](const LedFrame& f) { on_frame(f); });
+        auto result = transport_->start_rgbw(active_count_, [this](const std::vector<Rgbw>& f) {
+            on_frame(f);
+        });
         if (!result) {
             return result;
         }
@@ -43,6 +46,8 @@ public:
             transport_->stop();
         }
         waiting_ = false;
+        has_frame_ = false;
+        physical_.clear();
         return Result<void>::ok();
     }
 
@@ -61,6 +66,7 @@ public:
             (now - last_frame_us_) > static_cast<int64_t>(timeout_ms) * 1000) {
             has_frame_ = false;
             waiting_ = true;
+            physical_.clear();
             if (ctx_ && ctx_->request_fallback) {
                 const char* fallback = Preferences::fallback_mode_to_plugin_id(
                     prefs_->device().fallback_plugin, prefs_->device().last_used_plugin);
@@ -72,6 +78,7 @@ public:
     void render(Framebuffer& fb) override {
         std::lock_guard<std::mutex> lock(mutex_);
         fb.clear();
+        physical_.assign(fb.size(), Rgbw::black());
         if (!has_frame_ || prefs_ == nullptr) {
             return;
         }
@@ -79,10 +86,20 @@ public:
         const LedIndex n = std::min(static_cast<LedIndex>(frame_.size()), geo.active_count());
         for (LedIndex a = 0; a < n && a < geo.active_to_physical.size(); ++a) {
             const auto phys = geo.active_to_physical[a];
+            if (phys < physical_.size()) {
+                physical_[phys] = frame_[a];
+            }
             if (phys < fb.size()) {
-                fb[phys] = frame_[a];
+                fb[phys] = scale_rgbw_to_rgb_preview(frame_[a]);
             }
         }
+    }
+
+    std::span<const Rgbw> rgbw_passthrough() const override {
+        if (!has_frame_ || physical_.empty()) {
+            return {};
+        }
+        return physical_;
     }
 
     const PluginDescriptor& descriptor() const override { return desc_; }
@@ -100,12 +117,12 @@ private:
         return static_cast<Milliseconds>(v);
     }
 
-    void on_frame(const LedFrame& f) {
+    void on_frame(const std::vector<Rgbw>& f) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            frame_ = f.pixels;
+            frame_ = f;
             if (frame_.size() < active_count_) {
-                frame_.resize(active_count_, Rgb::black());
+                frame_.resize(active_count_, Rgbw::black());
             } else if (frame_.size() > active_count_) {
                 frame_.resize(active_count_);
             }
@@ -121,8 +138,9 @@ private:
     PluginContext* ctx_{nullptr};
     Preferences* prefs_{nullptr};
     LedIndex active_count_{kDefaultLedCount};
-    std::unique_ptr<IFrameTransport> transport_{std::make_unique<DdpTransport>()};
-    std::vector<Rgb> frame_;
+    std::unique_ptr<DdpTransport> transport_{std::make_unique<DdpTransport>()};
+    std::vector<Rgbw> frame_;
+    std::vector<Rgbw> physical_;
     std::mutex mutex_;
     bool has_frame_{false};
     bool waiting_{true};
@@ -160,8 +178,8 @@ private:
                 .realtime = true,
                 .needs_network = true,
                 .supports_audio = false,
-                .output = "rgb",
-                .tags = {"ambilight", "lumos", "vision", "ddp"},
+                .output = "rgbw",
+                .tags = {"ambilight", "lumos", "vision", "ddp", "rgbw"},
             },
     };
 };

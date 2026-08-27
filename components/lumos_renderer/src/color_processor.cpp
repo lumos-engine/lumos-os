@@ -68,4 +68,16 @@ void ColorProcessor::process_rgbw(std::span<const Rgb> in, std::vector<Rgbw>& ou
     }
 }
 
+void ColorProcessor::process_passthrough_rgbw(std::span<const Rgbw> in, std::vector<Rgbw>& out) {
+    out.resize(in.size());
+    const float brightness_scale = static_cast<float>(config_.brightness) / 255.0f;
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        Rgb rgb = apply_channel_balance(Rgb{in[i].r, in[i].g, in[i].b}, config_.balance_r,
+                                        config_.balance_g, config_.balance_b);
+        rgb = scale_rgb(rgb, brightness_scale);
+        const auto w = static_cast<std::uint8_t>(in[i].w * brightness_scale + 0.5f);
+        out[i] = Rgbw{rgb.r, rgb.g, rgb.b, w};
+    }
+}
+
 } // namespace lumos

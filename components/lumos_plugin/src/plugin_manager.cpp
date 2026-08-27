@@ -117,6 +117,12 @@ Result<void> PluginManager::present() {
         unchanged_presents_ = 0;
         last_presented_ = cur;
     }
+    if (active_ != nullptr && renderer_.is_rgbw()) {
+        const auto rgbw = active_->rgbw_passthrough();
+        if (!rgbw.empty()) {
+            return renderer_.present_rgbw(rgbw);
+        }
+    }
     return renderer_.present(framebuffer_);
 }
 

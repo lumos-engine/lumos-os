@@ -472,7 +472,7 @@ function updateLightingHint(){
   if(id==='lumos_vision'){
     const ipEl=document.getElementById('wifiIp');
     const ip=(ipEl&&ipEl.textContent&&ipEl.textContent!=='—')?ipEl.textContent:'this box IP';
-    lightingHint.textContent='Lumos Vision Direct DDP — host '+ip+', UDP 4048. One RGB per LED; no HyperHDR in the path.';
+    lightingHint.textContent='Lumos Vision Direct DDP — host '+ip+', UDP 4048, RGBW 4-byte. Vision converts at white_kelvin; this box does not extract white again.';
     return;
   }
   lightingHint.textContent='Local control on — HyperHDR WLED and Lumos Vision output-switch will not steal plugin/brightness. Select HyperHDR or Lumos Vision + Apply to hand back.';

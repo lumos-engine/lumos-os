@@ -5,6 +5,7 @@
 #include "lumos/preferences/preferences.hpp"
 
 #include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,8 @@ public:
     virtual void update(float delta_time_seconds) = 0;
     virtual void render(Framebuffer& framebuffer) = 0;
     virtual const PluginDescriptor& descriptor() const = 0;
+    // Lumos Vision Direct: physical RGBW already converted. Empty = use RGB framebuffer.
+    virtual std::span<const Rgbw> rgbw_passthrough() const { return {}; }
 };
 
 using PluginFactory = std::function<IPlugin*()>;

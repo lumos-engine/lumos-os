@@ -35,8 +35,12 @@ public:
     // Gamma → brightness → optional channel swizzle (logical RGB out).
     void process_rgb(std::span<const Rgb> in, std::vector<Rgb>& out);
 
-    // Gamma → brightness → RGB→RGBW → optional channel swizzle on RGB legs.
+    // Gamma → brightness → RGB→RGBW (ExtractMin). Used by HyperHDR and local plugins.
     void process_rgbw(std::span<const Rgb> in, std::vector<Rgbw>& out);
+
+    // Direct RGBW passthrough: brightness + RGB channel balance. No gamma, no ExtractMin.
+    // W is scaled with brightness only.
+    void process_passthrough_rgbw(std::span<const Rgbw> in, std::vector<Rgbw>& out);
 
     static Rgb apply_color_order(Rgb c, ColorOrder order);
     static Rgbw apply_color_order(Rgbw c, ColorOrder order);

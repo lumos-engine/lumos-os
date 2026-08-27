@@ -69,6 +69,37 @@ int main() {
     assert(yellow_out[0].b == 0);
     assert(yellow_out[0].w == 0);
 
+    // Passthrough keeps W; no ExtractMin; no gamma; brightness + RGB balance only.
+    cp.configure({
+        .brightness = 255,
+        .gamma = 2.2f,
+        .chipset = Chipset::Sk6812Rgbw,
+        .balance_r = 255,
+        .balance_g = 128,
+        .balance_b = 255,
+    });
+    std::vector<Rgbw> pass_in{{10, 40, 30, 200}};
+    std::vector<Rgbw> pass_out;
+    cp.process_passthrough_rgbw(pass_in, pass_out);
+    assert(pass_out.size() == 1);
+    assert(pass_out[0].r == 10);
+    assert(pass_out[0].g == 20);
+    assert(pass_out[0].b == 30);
+    assert(pass_out[0].w == 200);
+
+    cp.configure({
+        .brightness = 128,
+        .gamma = 2.2f,
+        .chipset = Chipset::Sk6812Rgbw,
+    });
+    std::vector<Rgbw> dim_in{{100, 0, 0, 200}};
+    std::vector<Rgbw> dim_out;
+    cp.process_passthrough_rgbw(dim_in, dim_out);
+    assert(dim_out[0].r == 50);
+    assert(dim_out[0].g == 0);
+    assert(dim_out[0].b == 0);
+    assert(dim_out[0].w == 100);
+
     std::puts("test_color_processor OK");
     return 0;
 }

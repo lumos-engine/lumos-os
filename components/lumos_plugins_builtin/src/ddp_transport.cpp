@@ -16,14 +16,7 @@ DdpTransport::~DdpTransport() {
     stop();
 }
 
-Result<void> DdpTransport::start(LedIndex led_count, FrameCallback on_frame) {
-    stop();
-    led_count_ = led_count;
-    on_frame_ = std::move(on_frame);
-    parser_.set_led_count(led_count_);
-    assembly_.assign(led_count_, Rgb::black());
-    recv_buf_.assign(1600, 0);
-
+Result<void> DdpTransport::bind_socket() {
     sock_ = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock_ < 0) {
         return Result<void>::fail(ErrorCode::NetworkError, "socket() failed");
@@ -47,8 +40,31 @@ Result<void> DdpTransport::start(LedIndex led_count, FrameCallback on_frame) {
     int flags = fcntl(sock_, F_GETFL, 0);
     fcntl(sock_, F_SETFL, flags | O_NONBLOCK);
 
-    log.info("DDP transport listening on UDP %u", static_cast<unsigned>(DdpParser::kPort));
+    log.info("DDP transport listening on UDP %u%s", static_cast<unsigned>(DdpParser::kPort),
+             rgbw_ ? " (RGBW 4-byte)" : "");
     return Result<void>::ok();
+}
+
+Result<void> DdpTransport::start(LedIndex led_count, FrameCallback on_frame) {
+    stop();
+    led_count_ = led_count;
+    rgbw_ = false;
+    on_frame_ = std::move(on_frame);
+    parser_.set_led_count(led_count_);
+    assembly_.assign(led_count_, Rgb::black());
+    recv_buf_.assign(1600, 0);
+    return bind_socket();
+}
+
+Result<void> DdpTransport::start_rgbw(LedIndex led_count, FrameCallbackRgbw on_frame) {
+    stop();
+    led_count_ = led_count;
+    rgbw_ = true;
+    on_frame_rgbw_ = std::move(on_frame);
+    parser_.set_led_count(led_count_);
+    assembly_rgbw_.assign(led_count_, Rgbw::black());
+    recv_buf_.assign(1600, 0);
+    return bind_socket();
 }
 
 void DdpTransport::stop() {
@@ -57,10 +73,18 @@ void DdpTransport::stop() {
         sock_ = -1;
     }
     on_frame_ = nullptr;
+    on_frame_rgbw_ = nullptr;
+    rgbw_ = false;
 }
 
 void DdpTransport::poll() {
-    if (sock_ < 0 || !on_frame_) {
+    if (sock_ < 0) {
+        return;
+    }
+    if (!rgbw_ && !on_frame_) {
+        return;
+    }
+    if (rgbw_ && !on_frame_rgbw_) {
         return;
     }
 
@@ -79,12 +103,21 @@ void DdpTransport::poll() {
         if (!header.valid) {
             continue;
         }
-        if (parser_.apply_payload(header, packet, assembly_)) {
-            ++frames_;
-            if (frames_ == 1 || (frames_ % 300) == 0) {
-                log.info("DDP frame #%u (pkts=%u, leds=%u)", static_cast<unsigned>(frames_),
-                         static_cast<unsigned>(packets_), static_cast<unsigned>(led_count_));
-            }
+
+        const bool ready = rgbw_ ? parser_.apply_payload_rgbw(header, packet, assembly_rgbw_)
+                                 : parser_.apply_payload(header, packet, assembly_);
+        if (!ready) {
+            continue;
+        }
+        ++frames_;
+        if (frames_ == 1 || (frames_ % 300) == 0) {
+            log.info("DDP frame #%u (pkts=%u, leds=%u%s)", static_cast<unsigned>(frames_),
+                     static_cast<unsigned>(packets_), static_cast<unsigned>(led_count_),
+                     rgbw_ ? ", rgbw" : "");
+        }
+        if (rgbw_) {
+            on_frame_rgbw_(assembly_rgbw_);
+        } else {
             LedFrame frame;
             frame.pixels = assembly_;
             frame.timestamp_ms = 0;

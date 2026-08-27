@@ -41,6 +41,31 @@ int main() {
     assert(assembly[0] == Rgb(10, 20, 30));
     assert(assembly[3] == Rgb(1, 2, 3));
 
+    // RGBW Direct: 4 bytes/LED, W preserved.
+    DdpParser rgbw_parser(2);
+    std::vector<Rgbw> rgbw_assembly;
+    std::vector<std::uint8_t> rgbw_pkt(DdpParser::kHeaderSize + 8);
+    rgbw_pkt[0] = 0x41;
+    rgbw_pkt[1] = 1;
+    rgbw_pkt[2] = 0; // data type unused; stride is implied
+    rgbw_pkt[3] = 1;
+    rgbw_pkt[8] = 0;
+    rgbw_pkt[9] = 8;
+    rgbw_pkt[10] = 10;
+    rgbw_pkt[11] = 20;
+    rgbw_pkt[12] = 30;
+    rgbw_pkt[13] = 200;
+    rgbw_pkt[14] = 1;
+    rgbw_pkt[15] = 2;
+    rgbw_pkt[16] = 3;
+    rgbw_pkt[17] = 4;
+    auto rgbw_header = rgbw_parser.parse_header(rgbw_pkt);
+    assert(rgbw_header.valid);
+    assert(rgbw_parser.apply_payload_rgbw(rgbw_header, rgbw_pkt, rgbw_assembly));
+    assert(rgbw_assembly.size() == 2);
+    assert(rgbw_assembly[0] == Rgbw(10, 20, 30, 200));
+    assert(rgbw_assembly[1] == Rgbw(1, 2, 3, 4));
+
     // Reject short packets
     std::uint8_t short_pkt[4] = {0x41, 0, 0, 0};
     assert(!parser.parse_header(short_pkt).valid);
