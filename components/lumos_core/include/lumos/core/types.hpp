@@ -19,7 +19,12 @@ enum class Chipset : std::uint8_t {
     Ws2813,
     Sk6812Rgb,
     Sk6812Rgbw,
+    Ws2815Rgbw,
 };
+
+inline constexpr bool chipset_is_rgbw(Chipset c) {
+    return c == Chipset::Sk6812Rgbw || c == Chipset::Ws2815Rgbw;
+}
 
 enum class ColorOrder : std::uint8_t {
     Grb = 0,

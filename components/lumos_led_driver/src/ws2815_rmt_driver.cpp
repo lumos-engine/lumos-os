@@ -12,6 +12,7 @@ led_model_t to_led_model(Chipset chipset) {
     case Chipset::Sk6812Rgbw:
         return LED_MODEL_SK6812;
     case Chipset::Ws2815:
+    case Chipset::Ws2815Rgbw:
     case Chipset::Ws2812B:
     case Chipset::Ws2813:
     default:
@@ -20,7 +21,7 @@ led_model_t to_led_model(Chipset chipset) {
 }
 
 led_pixel_format_t to_pixel_format(Chipset chipset) {
-    if (chipset == Chipset::Sk6812Rgbw) {
+    if (chipset_is_rgbw(chipset)) {
         return LED_PIXEL_FORMAT_GRBW;
     }
     return LED_PIXEL_FORMAT_GRB;

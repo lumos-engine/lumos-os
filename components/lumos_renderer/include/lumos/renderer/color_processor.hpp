@@ -30,7 +30,7 @@ public:
     void configure(const ColorProcessorConfig& config);
     ColorProcessorConfig config() const { return config_; }
 
-    bool is_rgbw() const { return config_.chipset == Chipset::Sk6812Rgbw; }
+    bool is_rgbw() const { return chipset_is_rgbw(config_.chipset); }
 
     // Gamma → brightness → optional channel swizzle (logical RGB out).
     void process_rgb(std::span<const Rgb> in, std::vector<Rgb>& out);

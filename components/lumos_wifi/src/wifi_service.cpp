@@ -594,10 +594,10 @@ Result<void> WifiService::start_mdns() {
                   static_cast<unsigned>(preferences_.device().led_count));
     std::snprintf(mdns_api_txt_, sizeof(mdns_api_txt_), "%s", kApiVersion.data());
     static constexpr const char* kChipsetNames[] = {"ws2815", "ws2812b", "ws2813", "sk6812",
-                                                    "sk6812rgbw"};
+                                                    "sk6812rgbw", "ws2815rgbw"};
     const auto chip = static_cast<int>(preferences_.device().chipset);
     const char* chip_name =
-        (chip >= 0 && chip < 5) ? kChipsetNames[chip] : kChipsetNames[0];
+        (chip >= 0 && chip < 6) ? kChipsetNames[chip] : kChipsetNames[0];
     std::snprintf(mdns_chipset_txt_, sizeof(mdns_chipset_txt_), "%s", chip_name);
 
     mdns_txt_item_t lumos_txt[] = {

@@ -113,6 +113,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <option value="2">WS2813</option>
   <option value="3">SK6812 RGB</option>
   <option value="4">SK6812 RGBW</option>
+  <option value="5">WS2815 RGBW</option>
 </select>
 <label>Color order</label>
 <select id="colorOrder" onchange="applyColorOrderLive()">
@@ -218,7 +219,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <input id="balB" type="number" min="0" max="255" value="255" title="Blue gain"/>
   <button type="button" onclick="applyBalanceLive()">Apply balance</button>
 </div>
-<p class="hint">SK6812 RGBW often needs green ~80–100 so yellow is amber, not lime. Applies live.</p>
+<p class="hint">RGBW strips often need green ~80–100 so yellow is amber, not lime. Applies live.</p>
 <button onclick="applyLighting()">Apply</button>
 </section>
 <section>

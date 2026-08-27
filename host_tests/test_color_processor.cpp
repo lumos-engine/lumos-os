@@ -100,6 +100,12 @@ int main() {
     assert(dim_out[0].b == 0);
     assert(dim_out[0].w == 100);
 
+    assert(cp.is_rgbw());
+    cp.configure({.chipset = Chipset::Ws2815Rgbw});
+    assert(cp.is_rgbw());
+    cp.configure({.chipset = Chipset::Ws2815});
+    assert(!cp.is_rgbw());
+
     std::puts("test_color_processor OK");
     return 0;
 }

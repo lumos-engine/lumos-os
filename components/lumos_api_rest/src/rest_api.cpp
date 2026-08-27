@@ -578,7 +578,7 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
         }
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "chipset"); cJSON_IsNumber(v)) {
-        const auto next = static_cast<Chipset>(std::clamp(v->valueint, 0, 4));
+        const auto next = static_cast<Chipset>(std::clamp(v->valueint, 0, 5));
         if (next != d.chipset) {
             d.chipset = next;
             renderer.set_chipset(next);
