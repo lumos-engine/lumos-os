@@ -32,6 +32,7 @@ private:
     static esp_err_t post_config(httpd_req_t* req);
     static esp_err_t get_status(httpd_req_t* req);
     static esp_err_t get_leds(httpd_req_t* req);
+    static esp_err_t get_leds_bin(httpd_req_t* req);
     static esp_err_t get_wifi_scan(httpd_req_t* req);
     static esp_err_t post_wifi(httpd_req_t* req);
     static esp_err_t post_wifi_retry(httpd_req_t* req);

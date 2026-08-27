@@ -58,7 +58,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 <main>
 <section>
 <h2>Live preview</h2>
-<label class="check"><input id="livePreview" type="checkbox" onchange="toggleLivePreview()"/> Enable live preview (uses Wi‑Fi; can flicker LEDs)</label>
+<label class="check"><input id="livePreview" type="checkbox" onchange="toggleLivePreview()"/> Enable live preview (~10 FPS; uses Wi‑Fi, can flicker LEDs)</label>
 <div class="preview-wrap"><canvas id="ledPreview" width="640" height="360"></canvas></div>
 <p class="hint" id="previewHint">Off by default. TV view shows active HyperHDR LEDs only.</p>
 </section>
@@ -416,7 +416,7 @@ function drawLed(ctx,x,y,size,rgb,idx){
   const lit=r|g|b; if(!lit){ r=28;g=34;b=44; }
   if(ignored){ r=90; g=50; b=20; }
   ctx.beginPath(); ctx.fillStyle='rgb('+r+','+g+','+b+')';
-  if(lit && !ignored){ ctx.shadowColor='rgba('+r+','+g+','+b+',0.55)'; ctx.shadowBlur=10; }
+  if(lit && !ignored && !livePreviewOn){ ctx.shadowColor='rgba('+r+','+g+','+b+',0.55)'; ctx.shadowBlur=10; }
   ctx.arc(x,y,size/2,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
   if(ignored){
     ctx.beginPath(); ctx.strokeStyle='#c9a227'; ctx.lineWidth=1.5;
@@ -823,17 +823,33 @@ let pollTimer=null;
 function toggleLivePreview(){
   livePreviewOn=!!livePreview.checked;
   previewHint.textContent=livePreviewOn
-    ? 'Live preview on — polling LEDs (may add flicker). Turn off for clean output.'
+    ? 'Live preview ~10 FPS. Uses Wi‑Fi — turn off if the strip flickers.'
     : 'Off by default. TV view shows active HyperHDR LEDs only.';
-  if(livePreviewOn){ pollLeds(); if(!pollTimer) pollTimer=setInterval(pollLeds,2000); }
-  else if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+  if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; }
+  if(livePreviewOn) pollLeds();
 }
 async function pollLeds(){
-  if(!livePreviewOn || document.hidden) return;
+  if(!livePreviewOn) return;
+  if(document.hidden){ pollTimer=setTimeout(pollLeds, 400); return; }
+  const t0=performance.now();
   try{
-    const m=await j('/api/v1/leds');
-    if(m && m.rgb_hex){ previewCount=m.count||0; ledRgb=hexToBytes(m.rgb_hex); drawPreview(); }
+    const r=await fetch('/api/v1/leds.bin',{cache:'no-store'});
+    if(r.ok){
+      const buf=new Uint8Array(await r.arrayBuffer());
+      if(buf.length>=2){
+        const count=buf[0]|(buf[1]<<8);
+        const need=2+count*3;
+        if(count>0 && buf.length>=need){
+          previewCount=count;
+          ledRgb=buf.subarray(2, need);
+          drawPreview();
+        }
+      }
+    }
   }catch{}
+  if(!livePreviewOn) return;
+  const wait=Math.max(20, 100-(performance.now()-t0));
+  pollTimer=setTimeout(pollLeds, wait);
 }
 async function loadNeighbors(){
   try{

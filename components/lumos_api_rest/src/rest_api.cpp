@@ -1099,6 +1099,27 @@ esp_err_t RestApi::get_leds(httpd_req_t* req) {
     return send_json(req, json.c_str());
 }
 
+esp_err_t RestApi::get_leds_bin(httpd_req_t* req) {
+    auto* self = from_req(req);
+    const auto& fb = self->framebuffer_;
+    const auto count = fb.size();
+    std::vector<std::uint8_t> buf(2 + static_cast<std::size_t>(count) * 3);
+    buf[0] = static_cast<std::uint8_t>(count & 0xFF);
+    buf[1] = static_cast<std::uint8_t>((count >> 8) & 0xFF);
+    for (LedIndex i = 0; i < count; ++i) {
+        const auto& c = fb[i];
+        const std::size_t o = 2 + static_cast<std::size_t>(i) * 3;
+        buf[o] = c.r;
+        buf[o + 1] = c.g;
+        buf[o + 2] = c.b;
+    }
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, reinterpret_cast<const char*>(buf.data()),
+                           static_cast<ssize_t>(buf.size()));
+}
+
 namespace {
 
 cJSON* build_wled_root(Preferences& preferences, PluginManager& plugins, WifiService& wifi,
@@ -1299,6 +1320,7 @@ Result<void> RestApi::start(httpd_handle_t server) {
         {.uri = "/api/v1/config", .method = HTTP_POST, .handler = post_config, .user_ctx = this},
         {.uri = "/api/v1/status", .method = HTTP_GET, .handler = get_status, .user_ctx = this},
         {.uri = "/api/v1/leds", .method = HTTP_GET, .handler = get_leds, .user_ctx = this},
+        {.uri = "/api/v1/leds.bin", .method = HTTP_GET, .handler = get_leds_bin, .user_ctx = this},
         {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = get_wifi_scan, .user_ctx = this},
         {.uri = "/api/v1/wifi", .method = HTTP_POST, .handler = post_wifi, .user_ctx = this},
         {.uri = "/api/v1/wifi/retry", .method = HTTP_POST, .handler = post_wifi_retry, .user_ctx = this},
