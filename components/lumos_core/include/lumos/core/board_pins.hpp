@@ -11,7 +11,13 @@ namespace lumos {
 // Target-specific defaults. One source tree; firmware values follow CONFIG_IDF_TARGET_*.
 // Host unit tests (no sdkconfig) fall back to classic ESP32 rules.
 
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
+#if defined(ARDUINO_ARCH_ESP8266) || defined(ESP8266)
+inline constexpr int kDefaultLedGpio = 4;
+inline constexpr int kDefaultRelayGpio = 5;
+inline constexpr int kDefaultOptoGpio = 4;
+inline constexpr int kMaxGpioNum = 16;
+inline constexpr const char* kIdfTargetName = "esp8266";
+#elif defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
 inline constexpr int kDefaultLedGpio = 16;
 inline constexpr int kDefaultRelayGpio = 17;
 inline constexpr int kDefaultOptoGpio = 4;
@@ -37,7 +43,9 @@ inline bool is_safe_output_gpio(int pin) {
     if (pin < 0 || pin > kMaxGpioNum) {
         return false;
     }
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
+#if defined(ARDUINO_ARCH_ESP8266) || defined(ESP8266)
+    return pin == 4 || pin == 5 || pin == 12 || pin == 13 || pin == 14;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
     if (pin == 0 || pin == 3 || pin == 45 || pin == 46) {
         return false;
     }
@@ -65,7 +73,10 @@ inline bool is_safe_input_gpio(int pin) {
     if (pin < 0 || pin > kMaxGpioNum) {
         return false;
     }
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
+#if defined(ARDUINO_ARCH_ESP8266) || defined(ESP8266)
+    // Interrupt-capable, not flash/strapping. GPIO16 has no IRQ.
+    return pin == 4 || pin == 5 || pin == 12 || pin == 13 || pin == 14;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3) && CONFIG_IDF_TARGET_ESP32S3
     if (pin == 0 || pin == 3 || pin == 45 || pin == 46) {
         return false;
     }

@@ -59,9 +59,11 @@ One source tree; **separate builds** per chip (binaries are not interchangeable)
 # Auto-detect the connected chip, then build+flash
 PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh auto build-flash
 
-# Doorbell transmitter (classic ESP32 only — optocoupler + ESP-NOW, no LEDs)
-./scripts/lumos_idf.sh doorbell-tx build
+# Doorbell transmitter (optocoupler + ESP-NOW, no LEDs)
+./scripts/lumos_idf.sh doorbell-tx build              # classic ESP32
+./scripts/lumos_idf.sh doorbell-tx-8266 build         # ESP8266 (PlatformIO)
 PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx flash
+PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx-8266 flash
 ```
 
 Each target keeps its own `sdkconfig.<target>` and `build-<target>/` directory. Shared defaults live in `sdkconfig.defaults`; chip-specific overrides in `sdkconfig.defaults.esp32` / `sdkconfig.defaults.esp32s3`. Pin safety helpers are in `components/lumos_core/include/lumos/core/board_pins.hpp`.
@@ -83,15 +85,27 @@ idf.py -B build-esp32s3 -D SDKCONFIG=sdkconfig.esp32s3 set-target esp32s3 build
 
 ## Doorbell transmitter (ESP #1)
 
-Separate slim firmware in `doorbell_tx/` (classic ESP32 only). LumosOS stays the receiver.
+Separate slim firmware. Same UI, JSON config (`lumosos-bell-config.json`), and ESP-NOW
+wire format on classic ESP32 and ESP8266. LumosOS stays the receiver.
 
-1. Flash: `./scripts/lumos_idf.sh doorbell-tx flash`
-2. Join AP `LumosOS-Bell`, open `http://192.168.4.1/`
-3. Set the LED board's Wi‑Fi MAC, lock the same Wi‑Fi channel as that board, save
-4. Paste the transmitter MAC into LumosOS `/doorbell` as paired TX and enable
-5. Optocoupler default: **GPIO 4**, active-LOW (collector to GPIO, emitter to GND)
+```bash
+# Classic ESP32 (ESP-IDF)
+./scripts/lumos_idf.sh doorbell-tx build
+PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx flash
+
+# ESP8266 (PlatformIO / Arduino — same product, second build target)
+./scripts/lumos_idf.sh doorbell-tx-8266 build
+PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx-8266 flash
+```
+
+1. Join AP `LumosOS-Bell`, open `http://192.168.4.1/`
+2. Connect the bell to the same router as the LED board (or pair on channel)
+3. On LumosOS `/doorbell` → Start pairing, then Find nearby on the bell
+4. Optocoupler default: **GPIO 4**, active-LOW (collector to GPIO, emitter to GND)
 
 ESP-NOW does not need a router; both boards must be on the **same channel**.
+Config JSON is interchangeable between ESP32 and ESP8266 bells (ESP8266 only
+accepts interrupt-safe GPIOs: 4, 5, 12, 13, 14 — invalid pins fall back to 4).
 
 ## Host unit tests
 

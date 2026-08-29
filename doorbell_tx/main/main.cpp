@@ -1,6 +1,9 @@
 #include "lumos/core/logger.hpp"
 #include "lumos/doorbell/doorbell_mac.hpp"
 #include "lumos/doorbell/doorbell_transmitter.hpp"
+#include "lumos/doorbell/doorbell_tx_form.hpp"
+#include "lumos/doorbell/doorbell_tx_prefs.hpp"
+#include "lumos/doorbell/doorbell_tx_ui.hpp"
 #include "lumos/ota/ota_service.hpp"
 
 #include "cJSON.h"
@@ -45,315 +48,10 @@ esp_timer_handle_t g_retry_timer{nullptr};
 std::string g_sta_ip;
 int g_sta_rssi{0};
 
-constexpr int kStaFailLimit = 5;
-constexpr std::uint64_t kBackgroundRetryUs = 30ULL * 1000ULL * 1000ULL;
-constexpr std::int64_t kUiPresenceHoldMs = 10000;
+constexpr const char* kIndexHtml = LUMOS_DOORBELL_TX_INDEX_HTML;
 
-constexpr const char* kApSsid = "LumosOS-Bell";
-constexpr const char* kWifiNs = "dbwifi";
+lumos::WifiPrefs g_wifi;
 
-struct WifiPrefs {
-    std::string ssid;
-    std::string password;
-    std::string hostname{"LumosOS-Bell"};
-    bool use_static{false};
-    std::string ip;
-    std::string gateway;
-    std::string netmask{"255.255.255.0"};
-    std::string dns1;
-    std::string dns2;
-};
-
-WifiPrefs g_wifi;
-
-constexpr const char* kIndexHtml = R"HTML(<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Doorbell TX</title>
-<style>
-:root{--bg:#0e1116;--card:#171c24;--text:#e8edf5;--muted:#8b95a8;--accent:#6cb6ff;--line:#2a3340}
-*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--text)}
-header{padding:1.25rem}h1{margin:0;font-size:1.3rem}
-p,label{color:var(--muted)}main{padding:0 1.25rem 2rem;max-width:520px}
-section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1rem;margin-bottom:1rem}
-label{display:block;margin:.5rem 0 .25rem;font-size:.85rem}
-input,select,button{width:100%;padding:.65rem .75rem;border-radius:8px;border:1px solid var(--line);background:#0f141b;color:var(--text)}
-button{background:var(--accent);color:#041018;border:none;font-weight:600;margin-top:.75rem;cursor:pointer}
-button.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
-.check{display:flex;align-items:center;gap:.5rem;color:var(--text);margin:.6rem 0}
-.check input{width:auto}
-.hint{font-size:.8rem;color:var(--muted)}
-.kv{display:grid;grid-template-columns:7.5rem 1fr;gap:.2rem .75rem;margin:0 0 .9rem;font-size:.9rem}
-.kv dt{color:var(--muted);margin:0}
-.kv dd{margin:0;word-break:break-all;color:var(--text)}
-.row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:end}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
-pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;font-size:.8rem}
-.pair{display:flex;gap:.75rem;align-items:flex-start;padding:.9rem;border-radius:10px;border:1px solid var(--line);margin:0 0 .75rem}
-.pair .dot{width:.7rem;height:.7rem;border-radius:50%;margin-top:.28rem;flex:0 0 auto}
-.pair h3{margin:0;font-size:1.02rem;color:var(--text)}
-.pair p{margin:.25rem 0 0;font-size:.85rem}
-.pair.ok{border-color:#2f6f52;background:#102018}
-.pair.ok .dot{background:#3ecf8e}
-.pair.no{border-color:#7a5a28;background:#1c160e}
-.pair.no .dot{background:#e0a04a}
-.pair.wait{border-color:#2a5a7a;background:#101820}
-.pair.wait .dot{background:#6cb6ff}
-#staticFields{display:none}#staticFields.show{display:block}
-</style></head>
-<body>
-<header><h1>Doorbell transmitter</h1><p>ESP-NOW · join home Wi-Fi like LumosOS</p></header>
-<main>
-<section>
-<h2>Status</h2>
-<div id="pairCard" class="pair no"><div class="dot"></div><div><h3>LED board</h3><p>Loading pairing status…</p></div></div>
-<pre id="status">Loading…</pre>
-</section>
-<section>
-<h2>Wi-Fi</h2>
-<dl id="wifiNow" class="kv">
-  <dt>SSID</dt><dd id="wifiSsid">—</dd>
-  <dt>Status</dt><dd id="wifiStatus">—</dd>
-  <dt>Mode</dt><dd id="wifiMode">—</dd>
-  <dt>Current IP</dt><dd id="wifiIp">—</dd>
-  <dt>Gateway</dt><dd id="wifiGw">—</dd>
-  <dt>Netmask</dt><dd id="wifiMask">—</dd>
-  <dt>DNS</dt><dd id="wifiDns">—</dd>
-  <dt>ESP MAC</dt><dd id="wifiMac">—</dd>
-</dl>
-<p class="hint">Connect this bell to the same router as the LED board. After that, use <b>http://lumosos-bell.local</b> (or the static IP) from your phone — no hotspot needed.</p>
-<label>Nearby networks</label>
-<div class="row">
-  <select id="netlist"><option value="">Scan to list…</option></select>
-  <button class="secondary" type="button" onclick="scanWifi()" style="margin-top:0;width:auto;padding:.65rem 1rem">Scan</button>
-</div>
-<label>SSID</label><input id="ssid" placeholder="Select above or type"/>
-<label>Password</label><input id="pass" type="password" placeholder="Leave blank to keep saved"/>
-<label>Hostname</label><input id="hostname" placeholder="LumosOS-Bell"/>
-<label class="check"><input id="useStatic" type="checkbox" onchange="toggleStatic()"/> Use static IP</label>
-<div id="staticFields">
-  <div class="grid2">
-    <div><label>IP address</label><input id="ip" placeholder="192.168.1.50"/></div>
-    <div><label>Gateway</label><input id="gateway" placeholder="192.168.1.1"/></div>
-  </div>
-  <label>Subnet mask</label><input id="netmask" placeholder="255.255.255.0"/>
-  <div class="grid2">
-    <div><label>DNS 1</label><input id="dns1"/></div>
-    <div><label>DNS 2</label><input id="dns2"/></div>
-  </div>
-</div>
-<button type="button" onclick="saveWifi()">Save &amp; Connect</button>
-<button id="retryWifiBtn" class="secondary" type="button" onclick="retryWifi()" style="display:none">Retry home Wi-Fi</button>
-<button class="secondary" type="button" onclick="forgetWifi()">Forget Wi-Fi (setup hotspot)</button>
-<pre id="wifiMsg"></pre>
-</section>
-<section>
-<h2>Pair LED board</h2>
-<p class="hint">On LumosOS open <b>/doorbell</b> → Start pairing, then Find nearby here. If this board is on home Wi-Fi, pairing stays on that channel (home Wi-Fi is not dropped).</p>
-<pre id="pairBits"></pre>
-<label>LED / receiver MAC</label>
-<input id="rxMac" placeholder="AA:BB:CC:DD:EE:FF"/>
-<label>ESP-NOW channel (1–13, auto when on Wi-Fi)</label>
-<input id="channel" type="number" min="1" max="13" value="1"/>
-<label>Optocoupler GPIO</label>
-<input id="pin" type="number" min="4" max="39" value="4"/>
-<label class="check"><input id="activeLow" type="checkbox" checked/> Active-LOW (typical optocoupler)</label>
-<button type="button" onclick="save()">Save doorbell</button>
-<button class="secondary" type="button" onclick="testSend()">Test send</button>
-<button class="secondary" type="button" onclick="findNearby()">Find nearby LED board</button>
-<pre id="msg"></pre>
-<div id="peers"></div>
-</section>
-<section>
-<h2>Backup &amp; restore</h2>
-<p class="hint">Clone pairing + Wi-Fi to another bell ESP32 after flashing the same firmware.</p>
-<label class="check"><input id="cfgSecrets" type="checkbox"/> Include Wi-Fi password in download</label>
-<label class="check"><input id="cfgClearIp" type="checkbox" checked/> On import: clear static IP</label>
-<button type="button" onclick="downloadConfig()">Download config JSON</button>
-<button class="secondary" type="button" onclick="cfgFile.click()">Upload config JSON…</button>
-<input id="cfgFile" type="file" accept="application/json,.json" style="display:none" onchange="uploadConfig(event)"/>
-<pre id="cfgStatus"></pre>
-</section>
-<section>
-<h2>OTA update</h2>
-<input id="firmware" type="file" accept=".bin"/>
-<button type="button" onclick="uploadOta()">Upload firmware</button>
-<pre id="ota"></pre>
-</section>
-</main>
-<script>
-let pairTimer=null;
-function toggleStatic(){staticFields.classList.toggle('show', useStatic.checked);}
-function setPairCard(d){
-  const el=document.getElementById('pairCard');
-  const pairing=!!(d.pairing||d.scanning);
-  const mac=(d.rx_mac||'').trim();
-  const paired=!!d.paired && !!mac;
-  el.className='pair '+(pairing?'wait':(paired?'ok':'no'));
-  const title=pairing?'Pairing…':(paired?'Paired with LED board':'Not paired');
-  let detail;
-  if(pairing) detail='Searching for LumosOS. Tap Start pairing on the LED board /doorbell page.';
-  else if(paired){
-    const sent=d.last_send_ms>0?' Last ESP-NOW send this boot at '+d.last_send_ms+' ms.':' No press sent yet this boot — use Test send.';
-    detail='Receiver '+mac+'.'+sent;
-  } else detail='Same Wi‑Fi is not pairing. Start pairing on LumosOS /doorbell, then Find nearby here.';
-  el.innerHTML='<div class="dot"></div><div><h3>'+title+'</h3><p>'+detail+'</p></div>';
-}
-function renderPeers(d){
-  const box=document.getElementById('peers');
-  const list=d.peers||[];
-  if(!list.length){
-    box.innerHTML=d.scanning?'<p class="hint">Searching…</p>':
-      (d.pairing?'<p class="hint">No LumosOS receiver heard. Start pairing on /doorbell first.</p>':'');
-    return;
-  }
-  box.innerHTML=list.map(p=>'<button type="button" class="secondary" onclick="pick(\''+p.mac+'\')">'+
-    (p.name||'LumosOS')+' · '+p.mac+' · ch '+p.channel+' · RSSI '+p.rssi+'</button>').join('');
-}
-async function load(){
-  const r=await fetch('/api'); const d=await r.json();
-  rxMac.value=d.rx_mac||'';
-  channel.value=d.channel||1;
-  pin.value=d.opto_pin||4;
-  activeLow.checked=!!d.active_low;
-  ssid.value=d.wifi_ssid||ssid.value||'';
-  hostname.value=d.hostname||'LumosOS-Bell';
-  useStatic.checked=!!d.wifi_use_static; toggleStatic();
-  ip.value=d.wifi_ip||''; gateway.value=d.wifi_gateway||'';
-  netmask.value=d.wifi_netmask||'255.255.255.0';
-  dns1.value=d.wifi_dns1||''; dns2.value=d.wifi_dns2||'';
-  setPairCard(d);
-  const retryBtn=document.getElementById('retryWifiBtn');
-  if(retryBtn) retryBtn.style.display=(d.setup_mode && d.has_saved_wifi)?'block':'none';
-  const dash=v=>(v==null||v==='')?'—':v;
-  const connected=!!d.wifi_connected;
-  const setup=!!d.setup_mode;
-  document.getElementById('wifiSsid').textContent=dash(connected?d.wifi_ssid:(setup?'LumosOS-Bell':d.wifi_ssid));
-  document.getElementById('wifiStatus').textContent=connected?'Connected':(setup?'Setup AP':'Disconnected');
-  document.getElementById('wifiMode').textContent=connected?'sta':(setup?'ap':'—');
-  document.getElementById('wifiIp').textContent=dash(connected?d.sta_ip:(setup?(d.ap_ip||'192.168.4.1'):''));
-  document.getElementById('wifiGw').textContent=dash(d.sta_gateway);
-  document.getElementById('wifiMask').textContent=dash(d.sta_netmask);
-  document.getElementById('wifiDns').textContent=dash(d.sta_dns);
-  document.getElementById('wifiMac').textContent=dash(d.own_mac);
-  status.textContent=[
-    'this_mac: '+(d.own_mac||'—'),
-    'wifi: '+(d.wifi_connected?(d.wifi_ssid+'  '+d.sta_ip):('setup AP '+ (d.ap_ip||'192.168.4.1'))),
-    'hostname: '+(d.hostname||'—')+(d.wifi_connected?'  → http://lumosos-bell.local':''),
-    'espnow: '+!!d.espnow_ready+'  paired: '+!!d.paired+'  if: '+(d.sta_linked?'STA':'AP'),
-    'channel: '+(d.channel||'—')
-  ].join('\n');
-  pairBits.textContent='scanning: '+!!d.scanning+'  pairing: '+!!d.pairing;
-  renderPeers(d);
-  if((d.pairing||d.scanning) && !pairTimer){ pairTimer=setInterval(load,1000); }
-  if(!d.pairing && !d.scanning && pairTimer){ clearInterval(pairTimer); pairTimer=null; }
-}
-async function scanWifi(){
-  netlist.innerHTML='<option>Scanning…</option>';
-  try{
-    const data=await (await fetch('/api/v1/wifi/scan')).json();
-    netlist.innerHTML='';
-    const blank=document.createElement('option');
-    blank.value=''; blank.textContent=(data.networks&&data.networks.length)?'Select a network…':'No networks found';
-    netlist.appendChild(blank);
-    for(const n of (data.networks||[])){
-      const o=document.createElement('option'); o.value=n.ssid;
-      o.textContent=n.ssid+'  ('+n.rssi+' dBm, ch '+n.channel+')'; netlist.appendChild(o);
-    }
-  }catch{ netlist.innerHTML='<option>Scan failed</option>'; }
-}
-netlist.addEventListener('change',e=>{ if(e.target.value) ssid.value=e.target.value; });
-async function saveWifi(){
-  const name=ssid.value.trim();
-  if(!name){alert('Select or enter an SSID');return;}
-  if(useStatic.checked && (!ip.value.trim()||!gateway.value.trim())){alert('Static IP needs IP and gateway');return;}
-  wifiMsg.textContent='Connecting…';
-  try{
-    const r=await fetch('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      ssid:name,password:pass.value,hostname:hostname.value.trim(),
-      use_static:useStatic.checked,ip:ip.value.trim(),gateway:gateway.value.trim(),
-      netmask:netmask.value.trim()||'255.255.255.0',dns1:dns1.value.trim(),dns2:dns2.value.trim()
-    })});
-    const t=await r.text();
-    wifiMsg.textContent=t;
-    alert('Connecting… then open http://lumosos-bell.local or the static IP. Setup hotspot will go away.');
-  }catch(e){ wifiMsg.textContent='Failed: '+e.message; }
-}
-async function retryWifi(){
-  wifiMsg.textContent='Retrying saved home Wi-Fi…';
-  try{
-    const r=await fetch('/api/v1/wifi/retry',{method:'POST'});
-    const t=await r.text();
-    wifiMsg.textContent=r.ok?'Retrying saved home Wi-Fi… this page stays up if it fails.':t;
-  }catch(e){ wifiMsg.textContent='Retry failed: '+e.message; }
-}
-function pulsePresence(){ fetch('/api/v1/wifi/presence',{method:'POST'}).catch(()=>{}); }
-async function forgetWifi(){
-  if(!confirm('Drop saved Wi-Fi and reopen LumosOS-Bell hotspot?')) return;
-  await fetch('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({forget:true})});
-  wifiMsg.textContent='Forgetting… device reboots to setup AP.';
-}
-async function save(){
-  msg.textContent='Saving…';
-  const body=new URLSearchParams({
-    rx_mac:rxMac.value.trim(), channel:String(channel.value),
-    pin:String(pin.value), active_low:activeLow.checked?'1':'0'
-  });
-  const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
-  msg.textContent=await r.text(); await load();
-}
-async function testSend(){
-  msg.textContent='Sending…';
-  const r=await fetch('/test',{method:'POST'}); msg.textContent=await r.text(); await load();
-}
-async function findNearby(){
-  msg.textContent='Searching…';
-  try{ await fetch('/discover',{method:'POST'}); await load(); }
-  catch(e){ msg.textContent='Search started. Rejoin if the setup hotspot dropped.'; }
-}
-async function pick(mac){
-  msg.textContent='Pairing '+mac+'…';
-  const r=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'rx_mac='+encodeURIComponent(mac)});
-  msg.textContent=await r.text(); await load();
-}
-async function downloadConfig(){
-  cfgStatus.textContent='Building…';
-  try{
-    const r=await fetch('/api/v1/config'+(cfgSecrets.checked?'?secrets=1':''));
-    if(!r.ok) throw new Error(await r.text());
-    const text=await r.text();
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));
-    a.download='lumosos-bell-config.json'; a.click();
-    cfgStatus.textContent='Downloaded lumosos-bell-config.json';
-  }catch(e){ cfgStatus.textContent='Download failed: '+e.message; }
-}
-async function uploadConfig(ev){
-  const f=ev.target.files&&ev.target.files[0]; ev.target.value='';
-  if(!f) return;
-  try{
-    const parsed=JSON.parse(await f.text());
-    if(cfgClearIp.checked){ parsed.clear_static_ip=true; }
-    const r=await fetch('/api/v1/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});
-    const t=await r.text();
-    if(!r.ok) throw new Error(t);
-    cfgStatus.textContent=t.indexOf('reboot')>=0?'Applied — rebooting…':t;
-  }catch(e){ cfgStatus.textContent='Upload failed: '+e.message; }
-}
-async function uploadOta(){
-  const f=firmware.files&&firmware.files[0];
-  if(!f){ota.textContent='Pick a .bin first';return;}
-  ota.textContent='Uploading…';
-  const r=await fetch('/api/v1/ota',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
-  ota.textContent=await r.text();
-}
-load(); scanWifi();
-pulsePresence();
-setInterval(pulsePresence,3000);
-setInterval(load,10000);
-</script>
-</body></html>
-)HTML";
 
 std::string nvs_get(nvs_handle_t h, const char* key, const std::string& def = {}) {
     size_t len = 0;
@@ -372,7 +70,7 @@ std::string nvs_get(nvs_handle_t h, const char* key, const std::string& def = {}
 
 void load_wifi_prefs() {
     nvs_handle_t h{};
-    if (nvs_open(kWifiNs, NVS_READONLY, &h) != ESP_OK) {
+    if (nvs_open(lumos::kDoorbellWifiNvsNs, NVS_READONLY, &h) != ESP_OK) {
         return;
     }
     g_wifi.ssid = nvs_get(h, "ssid");
@@ -391,7 +89,7 @@ void load_wifi_prefs() {
 
 void save_wifi_prefs() {
     nvs_handle_t h{};
-    if (nvs_open(kWifiNs, NVS_READWRITE, &h) != ESP_OK) {
+    if (nvs_open(lumos::kDoorbellWifiNvsNs, NVS_READWRITE, &h) != ESP_OK) {
         log.error("nvs_open dbwifi failed");
         return;
     }
@@ -408,16 +106,6 @@ void save_wifi_prefs() {
     nvs_close(h);
 }
 
-std::string mdns_label(std::string host) {
-    std::string out;
-    for (unsigned char c : host) {
-        if (std::isalnum(c) || c == '-') {
-            out.push_back(static_cast<char>(std::tolower(c)));
-        }
-    }
-    return out.empty() ? "lumosos-bell" : out;
-}
-
 void start_mdns() {
     static bool started = false;
     if (!started) {
@@ -427,7 +115,7 @@ void start_mdns() {
         }
         started = true;
     }
-    const auto host = mdns_label(g_wifi.hostname);
+    const auto host = lumos::doorbell_mdns_label(g_wifi.hostname);
     mdns_hostname_set(host.c_str());
     mdns_instance_name_set(g_wifi.hostname.c_str());
     mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
@@ -507,7 +195,7 @@ bool ui_session_active() {
     if (last <= 0) {
         return false;
     }
-    return (esp_timer_get_time() / 1000 - last) < kUiPresenceHoldMs;
+    return (esp_timer_get_time() / 1000 - last) < lumos::kDoorbellUiPresenceHoldMs;
 }
 
 void retry_timer_cb(void*) {
@@ -536,7 +224,7 @@ void arm_retry_timer() {
     }
     esp_timer_stop(g_retry_timer);
     if (has_saved_wifi()) {
-        esp_timer_start_periodic(g_retry_timer, kBackgroundRetryUs);
+        esp_timer_start_periodic(g_retry_timer, lumos::kDoorbellBackgroundRetryUs);
     }
 }
 
@@ -602,8 +290,8 @@ void start_ap_portal() {
     }
     g_sta_ip.clear();
     wifi_config_t ap{};
-    std::strncpy(reinterpret_cast<char*>(ap.ap.ssid), kApSsid, sizeof(ap.ap.ssid));
-    ap.ap.ssid_len = static_cast<std::uint8_t>(std::strlen(kApSsid));
+    std::strncpy(reinterpret_cast<char*>(ap.ap.ssid), lumos::kDoorbellApSsid, sizeof(ap.ap.ssid));
+    ap.ap.ssid_len = static_cast<std::uint8_t>(std::strlen(lumos::kDoorbellApSsid));
     ap.ap.channel = (g_tx != nullptr) ? g_tx->config().channel : 1;
     ap.ap.authmode = WIFI_AUTH_OPEN;
     ap.ap.max_connection = 4;
@@ -614,7 +302,7 @@ void start_ap_portal() {
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     esp_netif_ip_info_t ip{};
     if (g_ap_netif != nullptr && esp_netif_get_ip_info(g_ap_netif, &ip) == ESP_OK) {
-        log.info("SoftAP %s  " IPSTR "%s", kApSsid, IP2STR(&ip.ip),
+        log.info("SoftAP %s  " IPSTR "%s", lumos::kDoorbellApSsid, IP2STR(&ip.ip),
                  has_saved_wifi() ? " (saved home Wi-Fi kept)" : "");
     }
     arm_retry_timer();
@@ -645,11 +333,11 @@ void wifi_event_handler(void*, esp_event_base_t base, std::int32_t id, void* dat
                 return;
             }
             ++g_sta_fails;
-            if (g_sta_fails >= kStaFailLimit) {
+            if (g_sta_fails >= lumos::kDoorbellStaFailLimit) {
                 log.warn("STA failed %d times — setup AP (password kept)", g_sta_fails);
                 start_ap_portal();
             } else {
-                log.info("STA retry %d/%d", g_sta_fails, kStaFailLimit);
+                log.info("STA retry %d/%d", g_sta_fails, lumos::kDoorbellStaFailLimit);
                 esp_wifi_connect();
             }
         } else if (id == WIFI_EVENT_AP_STACONNECTED) {
@@ -690,32 +378,6 @@ void wifi_event_handler(void*, esp_event_base_t base, std::int32_t id, void* dat
             g_tx->set_sta_linked(true);
         }
     }
-}
-
-std::string form_value(const std::string& body, const char* key) {
-    const std::string prefix = std::string(key) + "=";
-    auto pos = body.find(prefix);
-    if (pos == std::string::npos) {
-        return {};
-    }
-    pos += prefix.size();
-    auto end = body.find('&', pos);
-    std::string raw = body.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
-    std::string out;
-    for (size_t i = 0; i < raw.size(); ++i) {
-        if (raw[i] == '+') {
-            out.push_back(' ');
-        } else if (raw[i] == '%' && i + 2 < raw.size()) {
-            unsigned v = 0;
-            if (std::sscanf(raw.c_str() + i + 1, "%02x", &v) == 1) {
-                out.push_back(static_cast<char>(v));
-                i += 2;
-            }
-        } else {
-            out.push_back(raw[i]);
-        }
-    }
-    return out;
 }
 
 esp_err_t send_text(httpd_req_t* req, const char* body, const char* type = "text/plain") {
@@ -827,7 +489,7 @@ esp_err_t get_api(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "sta_netmask", live_mask.c_str());
     cJSON_AddStringToObject(root, "sta_dns", live_dns.c_str());
     cJSON_AddNumberToObject(root, "rssi", g_sta_rssi);
-    cJSON_AddStringToObject(root, "ap_ip", "192.168.4.1");
+    cJSON_AddStringToObject(root, "ap_ip", lumos::kDoorbellApIp);
     cJSON_AddBoolToObject(root, "sta_linked", g_tx != nullptr && g_tx->sta_linked());
     const bool saved = has_saved_wifi();
     cJSON_AddBoolToObject(root, "has_saved_wifi", saved);
@@ -849,17 +511,17 @@ esp_err_t post_save(httpd_req_t* req) {
     buf[len] = 0;
     const std::string body(buf);
     auto cfg = g_tx->config();
-    const auto mac = form_value(body, "rx_mac");
+    const auto mac = lumos::doorbell_form_value(body, "rx_mac");
     cfg.rx_mac_valid = lumos::parse_mac(mac, cfg.rx_mac);
-    const auto ch = form_value(body, "channel");
+    const auto ch = lumos::doorbell_form_value(body, "channel");
     if (!ch.empty()) {
         cfg.channel = static_cast<std::uint8_t>(std::clamp(std::atoi(ch.c_str()), 1, 13));
     }
-    const auto pin = form_value(body, "pin");
+    const auto pin = lumos::doorbell_form_value(body, "pin");
     if (!pin.empty()) {
         cfg.opto_pin = std::atoi(pin.c_str());
     }
-    const auto al = form_value(body, "active_low");
+    const auto al = lumos::doorbell_form_value(body, "active_low");
     cfg.active_low = (al != "0" && al != "false");
     g_tx->apply_config(cfg);
     g_tx->save_nvs();
@@ -895,7 +557,7 @@ esp_err_t post_pair(httpd_req_t* req) {
         return send_text(req, "bad body");
     }
     buf[len] = 0;
-    const auto mac = form_value(buf, "rx_mac");
+    const auto mac = lumos::doorbell_form_value(buf, "rx_mac");
     std::uint8_t parsed[6]{};
     if (!lumos::parse_mac(mac, parsed)) {
         return send_text(req, "mac required");
@@ -966,7 +628,7 @@ esp_err_t post_wifi(httpd_req_t* req) {
     }
     if (cJSON_IsTrue(cJSON_GetObjectItem(json, "forget"))) {
         cJSON_Delete(json);
-        g_wifi = WifiPrefs{};
+        g_wifi = lumos::WifiPrefs{};
         save_wifi_prefs();
         xTaskCreate(&reboot_task, "reboot", 2048, nullptr, 5, nullptr);
         return send_text(req, "{\"ok\":true,\"rebooting\":true}", "application/json");
@@ -1029,23 +691,20 @@ esp_err_t get_android_probe(httpd_req_t* req) {
 }
 
 esp_err_t get_apple_probe(httpd_req_t* req) {
-    static constexpr const char* kSuccess =
-        "<!DOCTYPE HTML PUBLIC \"-//Apple//DTD HTML 3.2//EN\">"
-        "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
     httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, kSuccess, HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, lumos::kDoorbellAppleCaptiveHtml, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t get_windows_probe(httpd_req_t* req) {
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "Microsoft NCSI", HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, lumos::kDoorbellWindowsNcsi, HTTPD_RESP_USE_STRLEN);
 }
 
 esp_err_t get_config(httpd_req_t* req) {
     note_ui_activity();
     const bool secrets = std::strstr(req->uri, "secrets=1") != nullptr;
     cJSON* root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "product", "doorbell_tx");
+    cJSON_AddStringToObject(root, "product", lumos::kDoorbellConfigProduct);
     cJSON* device = cJSON_AddObjectToObject(root, "device");
     if (g_tx != nullptr) {
         const auto cfg = g_tx->config();

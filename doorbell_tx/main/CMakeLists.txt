@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "../../components/lumos_doorbell/src/doorbell_transmitter.cpp"
+        "../../components/lumos_doorbell/src/doorbell_platform_idf.cpp"
     INCLUDE_DIRS
         "."
         "../../components/lumos_doorbell/include"

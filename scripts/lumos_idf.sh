@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build / flash LumosOS (esp32 / esp32s3) or the doorbell transmitter (esp32 only).
+# Build / flash LumosOS (esp32 / esp32s3) or the doorbell transmitter (esp32 / esp8266).
 #
 # Usage:
 #   ./scripts/lumos_idf.sh esp32 build
@@ -9,6 +9,8 @@
 #   ./scripts/lumos_idf.sh auto build-flash
 #   ./scripts/lumos_idf.sh doorbell-tx build
 #   ./scripts/lumos_idf.sh esp32 doorbell-tx flash
+#   ./scripts/lumos_idf.sh doorbell-tx-8266 build
+#   ./scripts/lumos_idf.sh esp8266 doorbell-tx flash
 #
 # Env:
 #   PORT   serial port (optional; passed to idf.py / esptool)
@@ -26,11 +28,23 @@ PORT="${PORT:-}"
 IDF_EXPORT="${IDF:-$HOME/esp/esp-idf/export.sh}"
 
 usage() {
-  sed -n '2,16p' "$0" | sed 's/^# \?//'
+  sed -n '2,18p' "$0" | sed 's/^# \?//'
   exit 1
 }
 
 [[ -n "$ARG1" ]] || usage
+
+if [[ "$ARG1" == "doorbell-tx-8266" || "$ARG1" == "esp8266" ]]; then
+  ACTION="build"
+  if [[ "$ARG1" == "doorbell-tx-8266" ]]; then
+    ACTION="${ARG2:-build}"
+  elif [[ "$ARG2" == "doorbell-tx" || "$ARG2" == "doorbell-tx-8266" ]]; then
+    ACTION="${ARG3:-build}"
+  else
+    ACTION="${ARG2:-build}"
+  fi
+  exec "$ROOT/scripts/lumos_bell_8266.sh" "$ACTION"
+fi
 
 if [[ ! -f "$IDF_EXPORT" ]]; then
   echo "ESP-IDF export not found: $IDF_EXPORT" >&2
@@ -89,7 +103,7 @@ fi
 case "$TARGET" in
   esp32|esp32s3) ;;
   *)
-    echo "Unsupported target: $TARGET (use esp32, esp32s3, auto, or doorbell-tx)" >&2
+    echo "Unsupported target: $TARGET (use esp32, esp32s3, auto, doorbell-tx, or doorbell-tx-8266)" >&2
     exit 1
     ;;
 esac

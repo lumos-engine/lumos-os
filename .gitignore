@@ -2,6 +2,8 @@ build/
 build-esp32/
 build-esp32s3/
 build-doorbell-tx/
+doorbell_tx_8266/.pio/
+doorbell_tx_8266/.vscode/
 sdkconfig
 sdkconfig.old
 sdkconfig.esp32
