@@ -21,7 +21,7 @@ LumosOS is an LED operating system. HyperHDR is one plugin among many.
 - **ColorProcessor** pipeline: gamma → brightness → RGB→RGBW → power limit → driver
 - WS2815 / SK6812 RMT driver with RGBW (`led_strip_set_pixel_rgbw`)
 - Configurable perimeter layout (top / right / bottom / left)
-- Smart startup + configurable HyperHDR fallback
+- Smart startup; HyperHDR / Lumos Vision hold black on stream silence (same plugin)
 - WiFi STA + AP captive portal, static IP
 - **DHCP hostname** defaults to `LumosOS` (routers no longer show `espressif`)
 - **Multi-device discovery**: mDNS `_lumosos._tcp` + `GET /api/v1/neighbors`

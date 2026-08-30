@@ -66,9 +66,9 @@ struct PluginContext {
     Preferences* preferences{nullptr};
     Renderer* renderer{nullptr};
     LedIndex led_count{kDefaultLedCount};
-    // Optional callback: HyperHDR asks core to activate fallback plugin.
+    // Optional callback: unused by stream plugins (timeout holds black, same plugin).
     std::function<void(const std::string& plugin_id)> request_fallback;
-    // Optional: notify that frames are flowing (clears fallback state).
+    // Optional: notify that frames are flowing (clears leftover fallback state).
     std::function<void()> notify_stream_active;
 };
 

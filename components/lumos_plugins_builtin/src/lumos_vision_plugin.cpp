@@ -67,11 +67,6 @@ public:
             has_frame_ = false;
             waiting_ = true;
             physical_.clear();
-            if (ctx_ && ctx_->request_fallback) {
-                const char* fallback = Preferences::fallback_mode_to_plugin_id(
-                    prefs_->device().fallback_plugin, prefs_->device().last_used_plugin);
-                ctx_->request_fallback(fallback);
-            }
         }
     }
 
@@ -159,7 +154,7 @@ private:
                  .default_value = "1000",
                  .min_value = "200",
                  .max_value = "60000",
-                 .description = "Fallback after stream silence",
+                 .description = "Hold black after stream silence",
                  .group = "stream",
                  .unit = "ms",
                  .step = "100"},
