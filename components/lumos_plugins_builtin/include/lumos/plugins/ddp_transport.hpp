@@ -20,6 +20,7 @@ public:
 
 private:
     Result<void> bind_socket();
+    Result<void> try_open_socket();
 
     int sock_{-1};
     LedIndex led_count_{0};

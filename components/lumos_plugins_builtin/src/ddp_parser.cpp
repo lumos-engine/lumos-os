@@ -64,7 +64,7 @@ bool DdpParser::apply_payload(const DdpParseResult& header, std::span<const std:
         assembly[idx] = Rgb{header.payload[base], header.payload[base + 1], header.payload[base + 2]};
     }
 
-    return header.push;
+    return frame_ready(header, pixel_offset, pixel_count);
 }
 
 bool DdpParser::apply_payload_rgbw(const DdpParseResult& header, std::span<const std::uint8_t> /*packet*/,
@@ -90,7 +90,41 @@ bool DdpParser::apply_payload_rgbw(const DdpParseResult& header, std::span<const
                              header.payload[base + 3]};
     }
 
-    return header.push;
+    return frame_ready(header, pixel_offset, pixel_count);
+}
+
+bool DdpParser::apply_payload_rgb_as_rgbw(const DdpParseResult& header,
+                                          std::span<const std::uint8_t> /*packet*/,
+                                          std::vector<Rgbw>& assembly) const {
+    if (!header.valid || led_count_ == 0) {
+        return false;
+    }
+    if (assembly.size() != led_count_) {
+        assembly.assign(led_count_, Rgbw::black());
+    }
+
+    const std::size_t pixel_offset = header.data_offset / kRgbBytesPerLed;
+    const std::size_t pixel_count = header.payload.size() / kRgbBytesPerLed;
+
+    for (std::size_t i = 0; i < pixel_count; ++i) {
+        const std::size_t idx = pixel_offset + i;
+        if (idx >= assembly.size()) {
+            break;
+        }
+        const std::size_t base = i * kRgbBytesPerLed;
+        assembly[idx] = Rgbw{header.payload[base], header.payload[base + 1], header.payload[base + 2],
+                             0};
+    }
+
+    return frame_ready(header, pixel_offset, pixel_count);
+}
+
+bool DdpParser::frame_ready(const DdpParseResult& header, std::size_t pixel_offset,
+                            std::size_t pixel_count) const {
+    if (header.push) {
+        return true;
+    }
+    return pixel_count > 0 && (pixel_offset + pixel_count) >= led_count_;
 }
 
 } // namespace lumos

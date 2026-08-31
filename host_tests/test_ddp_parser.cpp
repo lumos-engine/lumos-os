@@ -66,6 +66,40 @@ int main() {
     assert(rgbw_assembly[0] == Rgbw(10, 20, 30, 200));
     assert(rgbw_assembly[1] == Rgbw(1, 2, 3, 4));
 
+    // Direct DDP often omits PUSH on a single datagram that covers the strip.
+    auto no_push = make_ddp_packet(0, false, {{10, 20, 30}, {40, 50, 60}, {70, 80, 90}, {1, 2, 3}});
+    auto no_push_header = parser.parse_header(no_push);
+    assert(no_push_header.valid);
+    assert(!no_push_header.push);
+    assert(parser.apply_payload(no_push_header, no_push, assembly));
+
+    // Mid-frame packet without PUSH is not complete.
+    std::vector<Rgb> partial;
+    auto first_half = make_ddp_packet(0, false, {{10, 20, 30}, {40, 50, 60}});
+    auto first_header = parser.parse_header(first_half);
+    assert(!parser.apply_payload(first_header, first_half, partial));
+    auto second_half = make_ddp_packet(6, false, {{70, 80, 90}, {1, 2, 3}});
+    auto second_header = parser.parse_header(second_half);
+    assert(parser.apply_payload(second_header, second_half, partial));
+
+    // RGBW without PUSH, full strip.
+    rgbw_pkt[0] = 0x40;
+    rgbw_assembly.clear();
+    auto rgbw_no_push = rgbw_parser.parse_header(rgbw_pkt);
+    assert(rgbw_no_push.valid);
+    assert(!rgbw_no_push.push);
+    assert(rgbw_parser.apply_payload_rgbw(rgbw_no_push, rgbw_pkt, rgbw_assembly));
+    assert(rgbw_assembly[0] == Rgbw(10, 20, 30, 200));
+
+    // RGB payload into RGBW assembly (W=0).
+    std::vector<Rgbw> expanded;
+    auto rgb_into_rgbw = make_ddp_packet(0, false, {{9, 8, 7}, {6, 5, 4}});
+    auto rgb_into_header = rgbw_parser.parse_header(rgb_into_rgbw);
+    assert(rgbw_parser.apply_payload_rgb_as_rgbw(rgb_into_header, rgb_into_rgbw, expanded));
+    assert(expanded.size() == 2);
+    assert(expanded[0] == Rgbw(9, 8, 7, 0));
+    assert(expanded[1] == Rgbw(6, 5, 4, 0));
+
     // Reject short packets
     std::uint8_t short_pkt[4] = {0x41, 0, 0, 0};
     assert(!parser.parse_header(short_pkt).valid);

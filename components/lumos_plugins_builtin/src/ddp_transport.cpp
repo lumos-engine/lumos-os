@@ -2,6 +2,9 @@
 
 #include "lumos/core/logger.hpp"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include <lwip/sockets.h>
 
 #include <cstring>
@@ -16,7 +19,7 @@ DdpTransport::~DdpTransport() {
     stop();
 }
 
-Result<void> DdpTransport::bind_socket() {
+Result<void> DdpTransport::try_open_socket() {
     sock_ = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock_ < 0) {
         return Result<void>::fail(ErrorCode::NetworkError, "socket() failed");
@@ -33,12 +36,25 @@ Result<void> DdpTransport::bind_socket() {
     addr.sin_port = htons(DdpParser::kPort);
 
     if (bind(sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        stop();
+        ::close(sock_);
+        sock_ = -1;
         return Result<void>::fail(ErrorCode::NetworkError, "bind DDP 4048 failed");
     }
 
     int flags = fcntl(sock_, F_GETFL, 0);
     fcntl(sock_, F_SETFL, flags | O_NONBLOCK);
+    return Result<void>::ok();
+}
+
+Result<void> DdpTransport::bind_socket() {
+    auto opened = try_open_socket();
+    if (!opened) {
+        vTaskDelay(pdMS_TO_TICKS(30));
+        opened = try_open_socket();
+    }
+    if (!opened) {
+        return opened;
+    }
 
     log.info("DDP transport listening on UDP %u%s", static_cast<unsigned>(DdpParser::kPort),
              rgbw_ ? " (RGBW 4-byte)" : "");
@@ -104,8 +120,16 @@ void DdpTransport::poll() {
             continue;
         }
 
-        const bool ready = rgbw_ ? parser_.apply_payload_rgbw(header, packet, assembly_rgbw_)
-                                 : parser_.apply_payload(header, packet, assembly_);
+        bool ready = false;
+        if (rgbw_) {
+            const auto sz = header.payload.size();
+            const bool rgbw_aligned = sz > 0 && (sz % DdpParser::kRgbwBytesPerLed) == 0;
+            const bool rgb_only = !rgbw_aligned && sz > 0 && (sz % DdpParser::kRgbBytesPerLed) == 0;
+            ready = rgb_only ? parser_.apply_payload_rgb_as_rgbw(header, packet, assembly_rgbw_)
+                             : parser_.apply_payload_rgbw(header, packet, assembly_rgbw_);
+        } else {
+            ready = parser_.apply_payload(header, packet, assembly_);
+        }
         if (!ready) {
             continue;
         }

@@ -26,13 +26,18 @@ public:
     void set_led_count(LedIndex led_count);
     DdpParseResult parse_header(std::span<const std::uint8_t> packet) const;
 
-    // Applies payload into the assembly buffer. Returns true when a full frame is ready (PUSH).
+    // Applies payload into the assembly buffer. Returns true when a frame is ready
+    // (PUSH, or the packet reaches the last LED — Direct DDP often omits PUSH).
     // RGB path is always 3 bytes/LED (HyperHDR / WLED).
     bool apply_payload(const DdpParseResult& header, std::span<const std::uint8_t> packet,
                        std::vector<Rgb>& assembly) const;
     // Direct RGBW: 4 bytes/LED (R,G,B,W). Offsets remain byte offsets.
     bool apply_payload_rgbw(const DdpParseResult& header, std::span<const std::uint8_t> packet,
                             std::vector<Rgbw>& assembly) const;
+    // 3-byte RGB into an RGBW assembly (W=0). Used when Vision still sends RGB
+    // after a HyperHDR → Direct DDP switch.
+    bool apply_payload_rgb_as_rgbw(const DdpParseResult& header, std::span<const std::uint8_t> packet,
+                                   std::vector<Rgbw>& assembly) const;
 
     static constexpr std::uint16_t kPort = 4048;
     static constexpr std::size_t kHeaderSize = 10;
@@ -40,6 +45,9 @@ public:
     static constexpr std::size_t kRgbwBytesPerLed = 4;
 
 private:
+    bool frame_ready(const DdpParseResult& header, std::size_t pixel_offset,
+                     std::size_t pixel_count) const;
+
     LedIndex led_count_{0};
 };
 

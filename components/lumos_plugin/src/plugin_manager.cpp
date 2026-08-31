@@ -68,10 +68,13 @@ Result<void> PluginManager::activate(const std::string& plugin_id) {
         return start;
     }
 
-    // Don't persist calibration as last-used (utility) — and skip NVS during identify spam.
-    if (plugin_id != "calibration" && (plugin_id != "hyperhdr" || !in_fallback_)) {
+    // Don't persist calibration as last-used. Stream switches (HyperHDR ↔ Vision)
+    // are time-critical — skip NVS so UDP 4048 can start receiving immediately.
+    if (plugin_id != "calibration") {
         preferences_.device().last_used_plugin = plugin_id;
-        preferences_.save();
+        if (plugin_id != "hyperhdr" && plugin_id != "lumos_vision") {
+            preferences_.save();
+        }
     }
 
     last_presented_.clear();
@@ -103,6 +106,15 @@ void PluginManager::tick(float delta_time_seconds) {
 }
 
 Result<void> PluginManager::present() {
+    if (active_ != nullptr && renderer_.is_rgbw()) {
+        const auto rgbw = active_->rgbw_passthrough();
+        if (!rgbw.empty()) {
+            unchanged_presents_ = 0;
+            last_presented_.clear();
+            return renderer_.present_rgbw(rgbw);
+        }
+    }
+
     const auto& cur = framebuffer_.data();
     const bool same = last_presented_.size() == cur.size() &&
                       (cur.empty() || std::memcmp(last_presented_.data(), cur.data(),
@@ -116,12 +128,6 @@ Result<void> PluginManager::present() {
     } else {
         unchanged_presents_ = 0;
         last_presented_ = cur;
-    }
-    if (active_ != nullptr && renderer_.is_rgbw()) {
-        const auto rgbw = active_->rgbw_passthrough();
-        if (!rgbw.empty()) {
-            return renderer_.present_rgbw(rgbw);
-        }
     }
     return renderer_.present(framebuffer_);
 }
