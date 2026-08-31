@@ -35,6 +35,11 @@ bool vision_output_switch_allowed(const PluginManager& plugins, bool local_overr
     if (is_stream_owner_id(plugins.active_id())) {
         return true;
     }
+    // Hyperk sends on:false when LV leaves HyperHDR. That used to land on "off"
+    // without local_override — still treat it as the ambilight pair.
+    if (!local_override && plugins.active_id() == "off") {
+        return true;
+    }
     return plugins.in_fallback() && !local_override;
 }
 
@@ -1181,15 +1186,16 @@ esp_err_t RestApi::put_wled_state(httpd_req_t* req) {
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "on"); cJSON_IsBool(v)) {
         self->wled_on_ = cJSON_IsTrue(v);
-        if (!self->wled_on_ && !self->local_override_) {
-            (void)self->plugins_.activate("off");
-        }
+        // Do not activate "off". HyperHDR sends on:false when LV switches to
+        // Direct DDP (device released). That stole the strip after vision/output.
     }
     if (const cJSON* v = cJSON_GetObjectItem(json, "live"); cJSON_IsBool(v)) {
         const bool live = cJSON_IsTrue(v);
         self->wled_live_ = live;
-        if (live && !self->local_override_) {
-            // Enter realtime / DDP path only when the user hasn't taken local control.
+        if (live && !self->local_override_ &&
+            self->plugins_.active_id() != "lumos_vision") {
+            // Enter realtime / DDP path only when the user hasn't taken local
+            // control and Vision Direct is not already driving the strip.
             (void)self->plugins_.activate("hyperhdr");
         }
     }
