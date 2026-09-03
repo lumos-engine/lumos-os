@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdarg>
-#include <string_view>
 
 namespace lumos {
 
@@ -15,7 +14,7 @@ enum class LogLevel {
 
 class Logger {
 public:
-    explicit Logger(std::string_view tag);
+    explicit Logger(const char* tag);
 
     void error(const char* fmt, ...) const __attribute__((format(printf, 2, 3)));
     void warn(const char* fmt, ...) const __attribute__((format(printf, 2, 3)));

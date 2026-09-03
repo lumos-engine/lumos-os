@@ -2,7 +2,16 @@
 
 // Shared doorbell TX web UI. ESP32 IDF and ESP8266 Arduino include this file.
 // Keep the markup identical so preferences, routes, and config JSON stay in lockstep.
-#define LUMOS_DOORBELL_TX_INDEX_HTML R"HTML(<!DOCTYPE html>
+// Must be a real C++ string (not a #define): GCC 10's preprocessor cannot host a
+// multiline raw string inside a macro, which breaks the ESP8266 Arduino build.
+#ifdef ARDUINO_ARCH_ESP8266
+#include <pgmspace.h>
+#define LUMOS_DBTX_PROGMEM PROGMEM
+#else
+#define LUMOS_DBTX_PROGMEM
+#endif
+
+static const char LUMOS_DOORBELL_TX_INDEX_HTML[] LUMOS_DBTX_PROGMEM = R"HTML(<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Doorbell TX</title>
@@ -290,4 +299,4 @@ setInterval(pulsePresence,3000);
 setInterval(load,10000);
 </script>
 </body></html>
-)HTML"
+)HTML";

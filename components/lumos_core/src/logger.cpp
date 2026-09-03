@@ -4,7 +4,7 @@
 
 namespace lumos {
 
-Logger::Logger(std::string_view tag) : tag_(tag.data()) {}
+Logger::Logger(const char* tag) : tag_(tag) {}
 
 void Logger::log(LogLevel level, const char* fmt, va_list args) const {
     esp_log_level_t esp_level = ESP_LOG_INFO;

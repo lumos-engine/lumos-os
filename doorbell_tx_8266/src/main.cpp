@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 #include "lumos/core/logger.hpp"
 #include "lumos/doorbell/doorbell_mac.hpp"
 #include "lumos/doorbell/doorbell_platform.hpp"
@@ -6,7 +8,6 @@
 #include "lumos/doorbell/doorbell_tx_prefs.hpp"
 #include "lumos/doorbell/doorbell_tx_ui.hpp"
 
-#include <Arduino.h>
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 #include <ESP8266WebServer.h>
@@ -23,7 +24,7 @@
 
 namespace {
 
-lumos::Logger log{"doorbell_tx_main"};
+lumos::Logger g_log{"doorbell_tx_main"};
 lumos::DoorbellTransmitter* g_tx{nullptr};
 lumos::DoorbellTransmitter g_tx_obj;
 ESP8266WebServer server(80);
@@ -59,7 +60,7 @@ struct WifiBlob {
     char dns2[16];
 };
 
-static const char kIndexHtml[] PROGMEM = LUMOS_DOORBELL_TX_INDEX_HTML;
+static const char* const kIndexHtml = LUMOS_DOORBELL_TX_INDEX_HTML;
 
 void note_ui_activity() {
     g_last_ui_ms = static_cast<std::int64_t>(millis());
@@ -144,7 +145,7 @@ void apply_sta_ip_config() {
     } else {
         WiFi.config(ip, gw, mask, dns1);
     }
-    log.info("STA static %s gw %s", g_wifi.ip.c_str(), g_wifi.gateway.c_str());
+    g_log.info("STA static %s gw %s", g_wifi.ip.c_str(), g_wifi.gateway.c_str());
 }
 
 void start_mdns() {
@@ -155,9 +156,9 @@ void start_mdns() {
     if (MDNS.begin(host.c_str())) {
         MDNS.addService("http", "tcp", 80);
         g_mdns_started = true;
-        log.info("mDNS http://%s.local", host.c_str());
+        g_log.info("mDNS http://%s.local", host.c_str());
     } else {
-        log.warn("mdns_init failed");
+        g_log.warn("mdns_init failed");
     }
 }
 
@@ -191,7 +192,7 @@ void apply_sta_config_and_connect(bool keep_ap) {
     }
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
     WiFi.begin(g_wifi.ssid.c_str(), g_wifi.password.c_str());
-    log.info("Connecting STA to %s%s", g_wifi.ssid.c_str(),
+    g_log.info("Connecting STA to %s%s", g_wifi.ssid.c_str(),
              (keep_ap || g_setup_ap) ? " (keeping setup AP)" : "");
 }
 
@@ -209,7 +210,7 @@ void begin_background_sta_attempt() {
     if (!has_saved_wifi() || g_sta_up || !g_setup_ap || g_retry_in_flight || ui_session_active()) {
         return;
     }
-    log.info("Background STA retry %s", g_wifi.ssid.c_str());
+    g_log.info("Background STA retry %s", g_wifi.ssid.c_str());
     apply_sta_config_and_connect(true);
 }
 
@@ -235,7 +236,7 @@ void start_ap_portal() {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(lumos::kDoorbellApSsid, nullptr, ch);
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
-    log.info("SoftAP %s  %s%s", lumos::kDoorbellApSsid, lumos::kDoorbellApIp,
+    g_log.info("SoftAP %s  %s%s", lumos::kDoorbellApSsid, lumos::kDoorbellApIp,
              has_saved_wifi() ? " (saved home Wi-Fi kept)" : "");
     arm_retry_timer();
 }
@@ -246,7 +247,7 @@ void on_got_ip(const WiFiEventStationModeGotIP& ev) {
     g_retry_in_flight = false;
     g_sta_ip = ev.ip.toString().c_str();
     g_sta_rssi = WiFi.RSSI();
-    log.info("Got IP %s", g_sta_ip.c_str());
+    g_log.info("Got IP %s", g_sta_ip.c_str());
     if (g_setup_ap) {
         drop_ap_to_sta();
     } else {
@@ -260,7 +261,7 @@ void on_got_ip(const WiFiEventStationModeGotIP& ev) {
 }
 
 void on_disconnected(const WiFiEventStationModeDisconnected&) {
-    log.warn("STA disconnected");
+    g_log.warn("STA disconnected");
     g_sta_up = false;
     if (g_tx != nullptr) {
         g_tx->set_sta_linked(false);
@@ -268,7 +269,7 @@ void on_disconnected(const WiFiEventStationModeDisconnected&) {
     g_sta_ip.clear();
     if (g_retry_in_flight) {
         g_retry_in_flight = false;
-        log.info("STA retry missed — staying on setup AP");
+        g_log.info("STA retry missed — staying on setup AP");
         return;
     }
     if (!g_want_sta || g_setup_ap) {
@@ -276,10 +277,10 @@ void on_disconnected(const WiFiEventStationModeDisconnected&) {
     }
     ++g_sta_fails;
     if (g_sta_fails >= lumos::kDoorbellStaFailLimit) {
-        log.warn("STA failed %d times — setup AP (password kept)", g_sta_fails);
+        g_log.warn("STA failed %d times — setup AP (password kept)", g_sta_fails);
         start_ap_portal();
     } else {
-        log.info("STA retry %d/%d", g_sta_fails, lumos::kDoorbellStaFailLimit);
+        g_log.info("STA retry %d/%d", g_sta_fails, lumos::kDoorbellStaFailLimit);
         WiFi.begin(g_wifi.ssid.c_str(), g_wifi.password.c_str());
     }
 }
@@ -578,7 +579,10 @@ void handle_config_post() {
         send_json(200, "{\"error\":\"invalid json\"}");
         return;
     }
-    JsonVariantConst device = json["device"].is<JsonObject>() ? json["device"] : json.as<JsonVariantConst>();
+    JsonVariantConst device = json.as<JsonVariantConst>();
+    if (json["device"].is<JsonObject>()) {
+        device = json["device"];
+    }
     const bool clear_ip = json["clear_static_ip"].is<bool>() && json["clear_static_ip"].as<bool>();
     if (g_tx != nullptr) {
         auto cfg = g_tx->config();
@@ -648,15 +652,15 @@ void handle_ota_upload() {
     if (upload.status == UPLOAD_FILE_START) {
         const size_t size = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
         if (!Update.begin(size)) {
-            log.error("ota begin failed");
+            g_log.error("ota begin failed");
         }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-            log.error("ota write failed");
+            g_log.error("ota write failed");
         }
     } else if (upload.status == UPLOAD_FILE_END) {
         if (!Update.end(true)) {
-            log.error("ota end failed");
+            g_log.error("ota end failed");
         }
     }
 }
@@ -684,7 +688,7 @@ void start_http() {
     server.on("/api/v1/ota", HTTP_POST, handle_ota_done, handle_ota_upload);
     server.onNotFound([]() { server.send(404, "text/plain", "Not Found"); });
     server.begin();
-    log.info("HTTP on :80");
+    g_log.info("HTTP on :80");
 }
 
 void start_wifi() {
@@ -711,7 +715,7 @@ void pump() {
 void setup() {
     Serial.begin(115200);
     delay(50);
-    log.info("Booting doorbell transmitter (ESP8266, no LEDs)");
+    g_log.info("Booting doorbell transmitter (ESP8266, no LEDs)");
     EEPROM.begin(kEepromSize);
     WiFi.persistent(false);
     g_got_ip = WiFi.onStationModeGotIP(on_got_ip);
@@ -724,12 +728,12 @@ void setup() {
     start_http();
     auto started = g_tx_obj.start();
     if (!started) {
-        log.error("transmitter start failed: %s", started.error().message.c_str());
+        g_log.error("transmitter start failed: %s", started.error().message.c_str());
     }
     if (!g_sta_ip.empty()) {
         g_tx_obj.set_sta_linked(true);
     }
-    log.info("ready  this_mac=%s  setup=http://192.168.4.1/  lan=http://lumosos-bell.local",
+    g_log.info("ready  this_mac=%s  setup=http://192.168.4.1/  lan=http://lumosos-bell.local",
              g_tx_obj.own_mac().c_str());
 }
 
