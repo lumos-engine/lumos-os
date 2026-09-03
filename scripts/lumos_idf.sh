@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build / flash LumosOS (esp32 / esp32s3) or the doorbell transmitter (esp32 / esp8266).
+# Build / flash LumosOS (esp32 / esp32s3).
+# Doorbell TX is forwarded to sibling ../esp32-hotkeys.
 #
 # Usage:
 #   ./scripts/lumos_idf.sh esp32 build
@@ -26,6 +27,7 @@ ARG2="${2:-}"
 ARG3="${3:-}"
 PORT="${PORT:-}"
 IDF_EXPORT="${IDF:-$HOME/esp/esp-idf/export.sh}"
+HOTKEYS_ROOT="$ROOT/../esp32-hotkeys"
 
 usage() {
   sed -n '2,18p' "$0" | sed 's/^# \?//'
@@ -34,16 +36,35 @@ usage() {
 
 [[ -n "$ARG1" ]] || usage
 
-if [[ "$ARG1" == "doorbell-tx-8266" || "$ARG1" == "esp8266" ]]; then
-  ACTION="build"
-  if [[ "$ARG1" == "doorbell-tx-8266" ]]; then
-    ACTION="${ARG2:-build}"
-  elif [[ "$ARG2" == "doorbell-tx" || "$ARG2" == "doorbell-tx-8266" ]]; then
-    ACTION="${ARG3:-build}"
-  else
-    ACTION="${ARG2:-build}"
+# Doorbell transmitter builds moved to sibling `esp32-hotkeys` repo.
+# Supported forms:
+#   ./scripts/lumos_idf.sh doorbell-tx build|flash
+#   ./scripts/lumos_idf.sh doorbell-tx-8266 build|flash
+#   ./scripts/lumos_idf.sh esp32 doorbell-tx build|flash
+#   ./scripts/lumos_idf.sh esp8266 doorbell-tx build|flash
+if [[ "$ARG1" == "doorbell-tx" ]]; then
+  ACTION="${ARG2:-build}"
+  exec bash "$HOTKEYS_ROOT/scripts/hotkeys_idf.sh" doorbell-tx "$ACTION"
+fi
+if [[ "$ARG1" == "doorbell-tx-8266" ]]; then
+  ACTION="${ARG2:-build}"
+  exec bash "$HOTKEYS_ROOT/scripts/hotkeys_idf.sh" doorbell-tx-8266 "$ACTION"
+fi
+if [[ "$ARG1" == "esp8266" && "$ARG2" == "doorbell-tx" ]]; then
+  ACTION="${ARG3:-build}"
+  exec bash "$HOTKEYS_ROOT/scripts/hotkeys_idf.sh" doorbell-tx-8266 "$ACTION"
+fi
+if [[ "$ARG2" == "doorbell-tx" ]]; then
+  ACTION="${ARG3:-build}"
+  # Treat `esp8266 doorbell-tx` as the PlatformIO target.
+  if [[ "$ARG1" == "esp8266" ]]; then
+    exec bash "$HOTKEYS_ROOT/scripts/hotkeys_idf.sh" doorbell-tx-8266 "$ACTION"
   fi
-  exec "$ROOT/scripts/lumos_bell_8266.sh" "$ACTION"
+  exec bash "$HOTKEYS_ROOT/scripts/hotkeys_idf.sh" doorbell-tx "$ACTION"
+fi
+if [[ "$ARG2" == "doorbell-tx-8266" ]]; then
+  ACTION="${ARG3:-build}"
+  exec bash "$HOTKEYS_ROOT/scripts/hotkeys_idf.sh" doorbell-tx-8266 "$ACTION"
 fi
 
 if [[ ! -f "$IDF_EXPORT" ]]; then
@@ -109,9 +130,9 @@ case "$TARGET" in
 esac
 
 if [[ "$PRODUCT" == "doorbell-tx" ]]; then
-  BUILD_DIR="$ROOT/build-doorbell-tx"
-  SDKCONFIG="$ROOT/sdkconfig.doorbell-tx"
-  PROJECT_DIR="$ROOT/doorbell_tx"
+  BUILD_DIR="$HOTKEYS_ROOT/build-doorbell-tx"
+  SDKCONFIG="$HOTKEYS_ROOT/sdkconfig.doorbell-tx"
+  PROJECT_DIR="$HOTKEYS_ROOT/doorbell_tx"
 else
   BUILD_DIR="$ROOT/build-${TARGET}"
   SDKCONFIG="$ROOT/sdkconfig.${TARGET}"

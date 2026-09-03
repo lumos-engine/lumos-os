@@ -59,11 +59,9 @@ One source tree; **separate builds** per chip (binaries are not interchangeable)
 # Auto-detect the connected chip, then build+flash
 PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh auto build-flash
 
-# Doorbell transmitter (optocoupler + ESP-NOW, no LEDs)
-./scripts/lumos_idf.sh doorbell-tx build              # classic ESP32
-./scripts/lumos_idf.sh doorbell-tx-8266 build         # ESP8266 (PlatformIO)
-PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx flash
-PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx-8266 flash
+# Doorbell transmitters live in the sibling esp32-hotkeys repo
+../esp32-hotkeys/scripts/hotkeys_idf.sh doorbell-tx build
+../esp32-hotkeys/scripts/hotkeys_idf.sh doorbell-tx-8266 build
 ```
 
 Each target keeps its own `sdkconfig.<target>` and `build-<target>/` directory. Shared defaults live in `sdkconfig.defaults`; chip-specific overrides in `sdkconfig.defaults.esp32` / `sdkconfig.defaults.esp32s3`. Pin safety helpers are in `components/lumos_core/include/lumos/core/board_pins.hpp`.
@@ -83,19 +81,19 @@ idf.py -B build-esp32s3 -D SDKCONFIG=sdkconfig.esp32s3 set-target esp32s3 build
 4. Set LED count + layout to match HyperHDR (e.g. 140 = 44+26+44+26).
 5. Point HyperHDR at the device using the **Hyperk** or **DDP** LED driver (port 4048).
 
-## Doorbell transmitter (ESP #1)
+## Doorbell transmitters (ESP #1)
 
-Separate slim firmware. Same UI, JSON config (`lumosos-bell-config.json`), and ESP-NOW
-wire format on classic ESP32 and ESP8266. LumosOS stays the receiver.
+Separate slim firmware in the sibling [`esp32-hotkeys`](../esp32-hotkeys) repo. Same
+ESP-NOW wire format on classic ESP32 and ESP8266; LumosOS stays the receiver.
 
 ```bash
 # Classic ESP32 (ESP-IDF)
-./scripts/lumos_idf.sh doorbell-tx build
-PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx flash
+../esp32-hotkeys/scripts/hotkeys_idf.sh doorbell-tx build
+PORT=/dev/cu.usbserial-0001 ../esp32-hotkeys/scripts/hotkeys_idf.sh doorbell-tx flash
 
-# ESP8266 (PlatformIO / Arduino — same product, second build target)
-./scripts/lumos_idf.sh doorbell-tx-8266 build
-PORT=/dev/cu.usbserial-0001 ./scripts/lumos_idf.sh doorbell-tx-8266 flash
+# ESP8266 (PlatformIO / Arduino)
+../esp32-hotkeys/scripts/hotkeys_idf.sh doorbell-tx-8266 build
+PORT=/dev/cu.usbserial-0001 ../esp32-hotkeys/scripts/hotkeys_idf.sh doorbell-tx-8266 flash
 ```
 
 1. Join AP `LumosOS-Bell`, open `http://192.168.4.1/`
