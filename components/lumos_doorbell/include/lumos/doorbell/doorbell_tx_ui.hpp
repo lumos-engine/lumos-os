@@ -134,9 +134,12 @@ function fillPins(board,current){
   if(![].some.call(pin.options,o=>o.value===pin.value)) pin.value='4';
   updateWireHint();
 }
-function updateWireHint(){
+function updateWireHint(level){
   const n=pin.selectedOptions[0]?pin.selectedOptions[0].textContent:'D2';
-  wireHint.textContent='Collector to '+n+', emitter to GND.';
+  let live='';
+  if(level===0) live=' Right now '+n+' is LOW (that should ring).';
+  else if(level===1) live=' Right now '+n+' is HIGH (idle).';
+  wireHint.textContent='Collector to '+n+', emitter to GND.'+live;
 }
 function toggleStatic(){staticFields.classList.toggle('show', useStatic.checked);}
 function setPairCard(d){
@@ -168,6 +171,7 @@ function renderPeers(d){
 async function load(){
   const r=await fetch('/api'); const d=await r.json();
   fillPins(d.board, d.opto_pin||4);
+  updateWireHint(d.opto_level);
   ssid.value=d.wifi_ssid||ssid.value||'';
   hostname.value=d.hostname||'LumosOS-Bell';
   useStatic.checked=!!d.wifi_use_static; toggleStatic();
@@ -193,7 +197,8 @@ async function load(){
     'wifi: '+(d.wifi_connected?(d.wifi_ssid+'  '+d.sta_ip):('setup AP '+ (d.ap_ip||'192.168.4.1'))),
     'hostname: '+(d.hostname||'—')+(d.wifi_connected?'  → http://lumosos-bell.local':''),
     'espnow: '+!!d.espnow_ready+'  paired: '+!!d.paired+'  if: '+(d.sta_linked?'STA':'AP'),
-    'channel: '+(d.channel||'—')
+    'channel: '+(d.channel||'—'),
+    'opto: '+(d.opto_level===0?'LOW':(d.opto_level===1?'HIGH':'—'))+'  last_seq: '+(d.last_seq||0)
   ].join('\n');
   pairBits.textContent='scanning: '+!!d.scanning+'  pairing: '+!!d.pairing;
   renderPeers(d);
@@ -300,7 +305,7 @@ async function uploadOta(){
 load(); scanWifi();
 pulsePresence();
 setInterval(pulsePresence,3000);
-setInterval(load,10000);
+setInterval(load,800);
 </script>
 </body></html>
 )HTML";

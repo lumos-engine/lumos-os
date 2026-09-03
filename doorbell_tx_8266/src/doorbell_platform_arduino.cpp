@@ -45,6 +45,7 @@ volatile bool gpio_edge_{false};
 void (*gpio_isr_fn)(void*){nullptr};
 void* gpio_isr_arg{nullptr};
 int gpio_pin_{-1};
+int gpio_last_level_{-1};
 bool eeprom_ready_{false};
 
 void ensure_eeprom() {
@@ -159,6 +160,7 @@ bool gpio_setup_input(int pin, bool pull_up, void (*isr)(void*), void* arg) {
     gpio_isr_arg = arg;
     gpio_pin_ = pin;
     pinMode(pin, pull_up ? INPUT_PULLUP : INPUT);
+    gpio_last_level_ = digitalRead(pin);
     attachInterrupt(digitalPinToInterrupt(pin), &raw_gpio_isr, CHANGE);
     return true;
 }
@@ -285,6 +287,13 @@ void set_pump(void (*fn)()) {
 }
 
 void poll() {
+    if (gpio_pin_ >= 0) {
+        const int level = digitalRead(gpio_pin_);
+        if (gpio_last_level_ >= 0 && level != gpio_last_level_) {
+            gpio_edge_ = true;
+        }
+        gpio_last_level_ = level;
+    }
     if (gpio_edge_) {
         gpio_edge_ = false;
         if (gpio_isr_fn != nullptr) {

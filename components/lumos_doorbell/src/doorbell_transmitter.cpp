@@ -16,10 +16,6 @@ namespace {
 
 Logger log{"doorbell_tx"};
 
-int active_level(const DoorbellTxConfig& cfg) {
-    return cfg.active_low ? 0 : 1;
-}
-
 } // namespace
 
 DoorbellTransmitter* DoorbellTransmitter::instance_ = nullptr;
@@ -118,6 +114,9 @@ DoorbellTxStatus DoorbellTransmitter::status() const {
     for (int i = 0; i < peer_count_ && i < kDoorbellMaxPeers; ++i) {
         st.peers[i] = peers_[i];
     }
+    if (configured_pin_ >= 0) {
+        st.opto_level = dbplat::gpio_read(configured_pin_);
+    }
     return st;
 }
 
@@ -199,10 +198,16 @@ void IRAM_ATTR DoorbellTransmitter::gpio_isr(void* arg) {
 void DoorbellTransmitter::gpio_isr(void* arg) {
 #endif
     auto* self = static_cast<DoorbellTransmitter*>(arg);
-    if (self != nullptr) {
-        dbplat::timer_stop(dbplat::TDebounce);
-        dbplat::timer_once(dbplat::TDebounce, kDoorbellTxDebounceUs);
+    if (self == nullptr) {
+        return;
     }
+#if defined(ARDUINO_ARCH_ESP8266)
+    // Already deferred to loop(); Ticker debounce often misses short/AC opto pulses.
+    self->maybe_fire();
+#else
+    dbplat::timer_stop(dbplat::TDebounce);
+    dbplat::timer_once(dbplat::TDebounce, kDoorbellTxDebounceUs);
+#endif
 }
 
 void DoorbellTransmitter::debounce_timer_cb(void* arg) {
@@ -283,11 +288,8 @@ void DoorbellTransmitter::scan_task(void* arg) {
 }
 
 void DoorbellTransmitter::maybe_fire() {
-    const int pin = configured_pin_ >= 0 ? configured_pin_ : cfg_.opto_pin;
-    const int level = dbplat::gpio_read(pin);
-    if (level != active_level(cfg_)) {
-        return;
-    }
+    // Edge is enough. Requiring the pin still active after debounce drops short
+    // doorbell / AC optocoupler pulses.
     const auto now = static_cast<std::uint32_t>(dbplat::now_us() / 1000ULL);
     if (last_send_ms_ != 0 && (now - last_send_ms_) < kDoorbellTxCooldownMs) {
         return;

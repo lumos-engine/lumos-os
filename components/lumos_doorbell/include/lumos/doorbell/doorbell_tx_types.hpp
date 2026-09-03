@@ -29,6 +29,7 @@ struct DoorbellTxStatus {
     std::uint32_t pairing_ms{0};
     int peer_count{0};
     DoorbellDiscoveredPeer peers[kDoorbellMaxPeers]{};
+    int opto_level{-1}; // 0/1 after GPIO is configured
 };
 
 constexpr const char* kDoorbellTxNvsNs = "dbtx";

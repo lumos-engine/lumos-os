@@ -334,6 +334,7 @@ void handle_api() {
         doc["paired"] = st.paired;
         doc["channel"] = cfg.channel;
         doc["opto_pin"] = cfg.opto_pin;
+        doc["opto_level"] = st.opto_level;
         doc["active_low"] = cfg.active_low;
         doc["espnow_ready"] = st.espnow_ready;
         doc["last_seq"] = st.last_seq;

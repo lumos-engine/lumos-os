@@ -435,6 +435,7 @@ esp_err_t get_api(httpd_req_t* req) {
         cJSON_AddBoolToObject(root, "paired", st.paired);
         cJSON_AddNumberToObject(root, "channel", cfg.channel);
         cJSON_AddNumberToObject(root, "opto_pin", cfg.opto_pin);
+        cJSON_AddNumberToObject(root, "opto_level", st.opto_level);
         cJSON_AddBoolToObject(root, "active_low", cfg.active_low);
         cJSON_AddBoolToObject(root, "espnow_ready", st.espnow_ready);
         cJSON_AddNumberToObject(root, "last_seq", st.last_seq);
