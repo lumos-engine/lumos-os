@@ -83,6 +83,23 @@ void arduino_recv(uint8_t* mac, uint8_t* data, uint8_t len) {
     recv_cb(mac, data, static_cast<int>(len), 0);
 }
 
+void arduino_send(uint8_t* mac, uint8_t status) {
+    (void)mac;
+    if (status != 0) {
+        Serial.printf("[doorbell_tx] esp_now_send status=%u\n", static_cast<unsigned>(status));
+    }
+}
+
+bool bind_espnow() {
+    if (esp_now_init() != 0) {
+        return false;
+    }
+    esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+    esp_now_register_recv_cb(&arduino_recv);
+    esp_now_register_send_cb(&arduino_send);
+    return true;
+}
+
 } // namespace
 
 std::uint64_t now_us() {
@@ -152,12 +169,16 @@ int gpio_read(int pin) {
 
 bool espnow_start(RecvFn cb) {
     recv_cb = cb;
-    if (esp_now_init() != 0) {
-        return false;
+    (void)esp_now_deinit();
+    return bind_espnow();
+}
+
+void espnow_on_wifi_change() {
+    if (recv_cb == nullptr) {
+        return;
     }
-    esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
-    esp_now_register_recv_cb(&arduino_recv);
-    return true;
+    (void)esp_now_deinit();
+    (void)bind_espnow();
 }
 
 bool espnow_add_peer(const std::uint8_t mac[6], std::uint8_t channel, bool sta_if) {
@@ -168,11 +189,15 @@ bool espnow_add_peer(const std::uint8_t mac[6], std::uint8_t channel, bool sta_i
     std::uint8_t m[6];
     std::memcpy(m, mac, 6);
     std::uint8_t ch = channel;
-    if (ch == 0) {
+    if (ch < 1 || ch > 13) {
         ch = wifi_get_channel();
     }
+    if (ch < 1 || ch > 13) {
+        ch = 1;
+    }
     esp_now_del_peer(m);
-    return esp_now_add_peer(m, ESP_NOW_ROLE_SLAVE, ch, nullptr, 0) == 0;
+    // COMBO: ESP32 peers have no ESP8266 role; SLAVE often makes unicast fail.
+    return esp_now_add_peer(m, ESP_NOW_ROLE_COMBO, ch, nullptr, 0) == 0;
 }
 
 bool espnow_send(const std::uint8_t mac[6], const std::uint8_t* data, int len) {

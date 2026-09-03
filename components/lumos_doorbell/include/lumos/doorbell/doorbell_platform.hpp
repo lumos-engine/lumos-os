@@ -35,6 +35,8 @@ int gpio_read(int pin);
 bool espnow_start(RecvFn cb);
 bool espnow_add_peer(const std::uint8_t mac[6], std::uint8_t channel, bool sta_if);
 bool espnow_send(const std::uint8_t mac[6], const std::uint8_t* data, int len);
+// ESP8266 ESP-NOW dies across WiFi.mode(); ESP-IDF no-op.
+void espnow_on_wifi_change();
 
 void wifi_set_ap_channel(std::uint8_t channel);
 std::uint8_t wifi_radio_channel(std::uint8_t fallback);

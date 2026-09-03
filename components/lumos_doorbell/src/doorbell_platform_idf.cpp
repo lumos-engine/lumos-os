@@ -135,6 +135,8 @@ bool espnow_send(const std::uint8_t mac[6], const std::uint8_t* data, int len) {
     return esp_now_send(mac, data, len) == ESP_OK;
 }
 
+void espnow_on_wifi_change() {}
+
 void wifi_set_ap_channel(std::uint8_t channel) {
     wifi_config_t ap{};
     if (esp_wifi_get_config(WIFI_IF_AP, &ap) == ESP_OK) {

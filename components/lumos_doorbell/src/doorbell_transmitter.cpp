@@ -172,6 +172,7 @@ void DoorbellTransmitter::set_sta_linked(bool linked) {
     if (!started_ || !espnow_ready_) {
         return;
     }
+    dbplat::espnow_on_wifi_change();
     const auto ch = radio_channel();
     if (ch >= 1 && ch <= 13) {
         cfg_.channel = ch;
@@ -316,12 +317,19 @@ void DoorbellTransmitter::send_press(bool bump_seq) {
     pkt.reserved = 0;
     pkt.tx_id = cfg_.tx_id;
     last_send_ms_ = static_cast<std::uint32_t>(dbplat::now_us() / 1000ULL);
-    if (!dbplat::espnow_send(cfg_.rx_mac, reinterpret_cast<const std::uint8_t*>(&pkt),
-                             static_cast<int>(sizeof(pkt)))) {
+    add_peer();
+    ensure_broadcast_peer();
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&pkt);
+    const int len = static_cast<int>(sizeof(pkt));
+    // ESP32 STA accepts ESP32 unicast, but drops ESP8266 unicast to the STA MAC.
+    // Pairing already uses broadcast and is heard; send press the same way.
+    const bool uni = dbplat::espnow_send(cfg_.rx_mac, bytes, len);
+    const bool bcast = dbplat::espnow_send(kDoorbellBroadcastMac, bytes, len);
+    if (!uni && !bcast) {
         log.warn("esp_now_send failed seq=%u", static_cast<unsigned>(seq_));
     } else {
-        log.info("sent DOORBELL_PRESS seq=%u to %s", static_cast<unsigned>(seq_),
-                 format_mac(cfg_.rx_mac).c_str());
+        log.info("sent DOORBELL_PRESS seq=%u to %s%s", static_cast<unsigned>(seq_),
+                 format_mac(cfg_.rx_mac).c_str(), bcast ? " +bcast" : "");
     }
 }
 
@@ -372,8 +380,12 @@ void DoorbellTransmitter::send_pair(std::uint8_t type, const std::uint8_t* dest)
     own_mac_bytes(mac);
     DoorbellPairHello pkt{};
     fill_pair_hello(pkt, type, DOORBELL_ROLE_TX, radio_channel(), mac, "LumosOS-Bell", cfg_.tx_id);
-    (void)dbplat::espnow_send(dest, reinterpret_cast<const std::uint8_t*>(&pkt),
-                              static_cast<int>(sizeof(pkt)));
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&pkt);
+    const int len = static_cast<int>(sizeof(pkt));
+    (void)dbplat::espnow_send(dest, bytes, len);
+    if (!mac_equal(dest, kDoorbellBroadcastMac)) {
+        (void)dbplat::espnow_send(kDoorbellBroadcastMac, bytes, len);
+    }
 }
 
 void DoorbellTransmitter::on_packet(const std::uint8_t mac[6], const std::uint8_t* data, int len,

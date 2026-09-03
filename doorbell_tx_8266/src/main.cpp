@@ -17,6 +17,7 @@
 #include <Updater.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <set>
@@ -415,8 +416,16 @@ void handle_test() {
         send_text(200, "not ready");
         return;
     }
+    if (!g_tx->config().rx_mac_valid) {
+        send_text(200, "Not paired — Find nearby, then pick the LED board.");
+        return;
+    }
     g_tx->test_send();
-    send_text(200, "Sent (if paired).");
+    const auto st = g_tx->status();
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "Sent press seq=%u to %s (broadcast too).",
+                  static_cast<unsigned>(st.last_seq), lumos::format_mac(st.cfg.rx_mac).c_str());
+    send_text(200, buf);
 }
 
 void handle_discover() {
