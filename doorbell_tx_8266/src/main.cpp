@@ -328,6 +328,7 @@ void handle_api() {
     if (g_tx != nullptr) {
         const auto st = g_tx->status();
         const auto& cfg = st.cfg;
+        doc["board"] = "esp8266";
         doc["own_mac"] = st.own_mac;
         doc["rx_mac"] = cfg.rx_mac_valid ? lumos::format_mac(cfg.rx_mac) : "";
         doc["paired"] = st.paired;
@@ -394,7 +395,9 @@ void handle_save() {
     }
     auto cfg = g_tx->config();
     const auto mac = arg_or_form("rx_mac");
-    cfg.rx_mac_valid = lumos::parse_mac(mac, cfg.rx_mac);
+    if (!mac.empty()) {
+        cfg.rx_mac_valid = lumos::parse_mac(mac, cfg.rx_mac);
+    }
     const auto ch = arg_or_form("channel");
     if (!ch.empty()) {
         cfg.channel = static_cast<std::uint8_t>(std::clamp(std::atoi(ch.c_str()), 1, 13));

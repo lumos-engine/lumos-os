@@ -428,6 +428,7 @@ esp_err_t get_api(httpd_req_t* req) {
     if (g_tx != nullptr) {
         const auto st = g_tx->status();
         const auto& cfg = st.cfg;
+        cJSON_AddStringToObject(root, "board", lumos::kIdfTargetName);
         cJSON_AddStringToObject(root, "own_mac", st.own_mac.c_str());
         cJSON_AddStringToObject(root, "rx_mac",
                                 cfg.rx_mac_valid ? lumos::format_mac(cfg.rx_mac).c_str() : "");
@@ -512,7 +513,9 @@ esp_err_t post_save(httpd_req_t* req) {
     const std::string body(buf);
     auto cfg = g_tx->config();
     const auto mac = lumos::doorbell_form_value(body, "rx_mac");
-    cfg.rx_mac_valid = lumos::parse_mac(mac, cfg.rx_mac);
+    if (!mac.empty()) {
+        cfg.rx_mac_valid = lumos::parse_mac(mac, cfg.rx_mac);
+    }
     const auto ch = lumos::doorbell_form_value(body, "channel");
     if (!ch.empty()) {
         cfg.channel = static_cast<std::uint8_t>(std::clamp(std::atoi(ch.c_str()), 1, 13));

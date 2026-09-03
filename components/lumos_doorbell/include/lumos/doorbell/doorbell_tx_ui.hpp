@@ -94,16 +94,12 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </section>
 <section>
 <h2>Pair LED board</h2>
-<p class="hint">On LumosOS open <b>/doorbell</b> → Start pairing, then Find nearby here. If this board is on home Wi-Fi, pairing stays on that channel (home Wi-Fi is not dropped).</p>
+<p class="hint">On LumosOS open <b>/doorbell</b> → Start pairing, then Find nearby here.</p>
+<label>Optocoupler pin</label>
+<select id="pin" onchange="updateWireHint()"></select>
+<p class="hint" id="wireHint">Collector to D2, emitter to GND.</p>
 <pre id="pairBits"></pre>
-<label>LED / receiver MAC</label>
-<input id="rxMac" placeholder="AA:BB:CC:DD:EE:FF"/>
-<label>ESP-NOW channel (1–13, auto when on Wi-Fi)</label>
-<input id="channel" type="number" min="1" max="13" value="1"/>
-<label>Optocoupler GPIO</label>
-<input id="pin" type="number" min="4" max="39" value="4"/>
-<label class="check"><input id="activeLow" type="checkbox" checked/> Active-LOW (typical optocoupler)</label>
-<button type="button" onclick="save()">Save doorbell</button>
+<button type="button" onclick="savePin()">Save pin</button>
 <button class="secondary" type="button" onclick="testSend()">Test send</button>
 <button class="secondary" type="button" onclick="findNearby()">Find nearby LED board</button>
 <pre id="msg"></pre>
@@ -128,6 +124,20 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
 </main>
 <script>
 let pairTimer=null;
+const PINS_8266=[{g:4,n:'D2'},{g:5,n:'D1'},{g:14,n:'D5'},{g:12,n:'D6'},{g:13,n:'D7'}];
+const PINS_ESP=[{g:4,n:'GPIO 4'},{g:5,n:'GPIO 5'},{g:12,n:'GPIO 12'},{g:13,n:'GPIO 13'},{g:14,n:'GPIO 14'}];
+function pinList(board){return board==='esp8266'?PINS_8266:PINS_ESP;}
+function fillPins(board,current){
+  const list=pinList(board);
+  pin.innerHTML=list.map(p=>'<option value="'+p.g+'">'+p.n+'</option>').join('');
+  pin.value=String(current||4);
+  if(![].some.call(pin.options,o=>o.value===pin.value)) pin.value='4';
+  updateWireHint();
+}
+function updateWireHint(){
+  const n=pin.selectedOptions[0]?pin.selectedOptions[0].textContent:'D2';
+  wireHint.textContent='Collector to '+n+', emitter to GND.';
+}
 function toggleStatic(){staticFields.classList.toggle('show', useStatic.checked);}
 function setPairCard(d){
   const el=document.getElementById('pairCard');
@@ -157,10 +167,7 @@ function renderPeers(d){
 }
 async function load(){
   const r=await fetch('/api'); const d=await r.json();
-  rxMac.value=d.rx_mac||'';
-  channel.value=d.channel||1;
-  pin.value=d.opto_pin||4;
-  activeLow.checked=!!d.active_low;
+  fillPins(d.board, d.opto_pin||4);
   ssid.value=d.wifi_ssid||ssid.value||'';
   hostname.value=d.hostname||'LumosOS-Bell';
   useStatic.checked=!!d.wifi_use_static; toggleStatic();
@@ -238,12 +245,9 @@ async function forgetWifi(){
   await fetch('/api/v1/wifi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({forget:true})});
   wifiMsg.textContent='Forgetting… device reboots to setup AP.';
 }
-async function save(){
+async function savePin(){
   msg.textContent='Saving…';
-  const body=new URLSearchParams({
-    rx_mac:rxMac.value.trim(), channel:String(channel.value),
-    pin:String(pin.value), active_low:activeLow.checked?'1':'0'
-  });
+  const body=new URLSearchParams({pin:String(pin.value), active_low:'1'});
   const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
   msg.textContent=await r.text(); await load();
 }
