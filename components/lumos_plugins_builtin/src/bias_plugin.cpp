@@ -47,13 +47,13 @@ private:
             return;
         }
         temperature_ = std::clamp(
-            std::atoi(prefs_->get_plugin_param("bias", "temperature", "55").c_str()), 0, 100);
+            std::atoi(prefs_->get_plugin_param("bias", "temperature", "95").c_str()), 0, 100);
         intensity_ = std::clamp(
             std::atoi(prefs_->get_plugin_param("bias", "intensity", "100").c_str()), 0, 100);
     }
 
     Preferences* prefs_{nullptr};
-    int temperature_{55};
+    int temperature_{95};
     int intensity_{100};
     PluginDescriptor desc_{
         .id = "bias",
@@ -65,10 +65,10 @@ private:
                 {.id = "temperature",
                  .name = "Temperature",
                  .type = ParamType::Int,
-                 .default_value = "55",
+                 .default_value = "95",
                  .min_value = "0",
                  .max_value = "100",
-                 .description = "0 = warm, 50 = white, 100 = cool (bias lights usually ~55–70)",
+                 .description = "0 = warm, 50 = white, 100 = cool (default 95)",
                  .group = "look",
                  .unit = "%",
                  .step = "1"},
