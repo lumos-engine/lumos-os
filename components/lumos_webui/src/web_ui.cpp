@@ -189,10 +189,11 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <p class="hint" id="edgePrompt">Light the <b>first</b> non-skipped LED of this edge.</p>
   <label>Wire index</label><input id="edgeIdx" type="number" min="0" max="2000" value="0"/>
   <div class="grid2">
+    <button class="secondary" type="button" id="edgePrev" onclick="wizEdgeBack()" disabled>Previous point</button>
     <button type="button" onclick="wizEdgeLight()">Light this index</button>
-    <button type="button" onclick="wizEdgeConfirm()" style="margin-top:.75rem">Confirm</button>
   </div>
-  <p class="hint">Each LED belongs to one edge. A lower last index wraps through 0 (110 then 9). Skipped LEDs stay off. The next edge starts at the next LED that is not skipped.</p>
+  <button type="button" onclick="wizEdgeConfirm()" style="margin-top:.75rem">Confirm</button>
+  <p class="hint">Each LED belongs to one edge. A lower last index wraps through 0 (110 then 9). Skipped LEDs stay off. The next edge starts at the next LED that is not skipped. Previous point reopens the last confirmed LED.</p>
   <p class="hint" id="edgeStatus">—</p>
 </div>
 <div id="wiz5" style="display:none">
@@ -262,6 +263,7 @@ let ledPositions=[]; // {i,x,y} physical wire index
 let calPickOn=false;
 let wizStep=0;
 let edgePhase=0; // pairs of first/last along wire_side_order
+let edgeConfirmed=[]; // wire index confirmed at each phase this session
 let edgeRanges={top:[0,0],right:[0,0],bottom:[0,0],left:[0,0]};
 let edgeRangesSet=false;
 const sideKeys=['top','right','bottom','left'];
@@ -737,13 +739,18 @@ function showWiz(){
   for(let i=0;i<6;i++){ const el=document.getElementById('wiz'+i); if(el) el.style.display=i===wizStep?'block':'none'; }
   wizStepLabel.textContent='Step '+(wizStep+1)+' / 6 — '+wizLabels[wizStep];
   wizBack.disabled=wizStep===0;
+  wizBack.textContent=(wizStep===4 && edgePhase>0)?'Previous point':'Back';
   wizNext.textContent=wizStep===5?'Done':'Next';
   if(wizStep===3){ calPick.checked=true; toggleCalPick(); }
   if(wizStep===4) updateEdgePrompt();
   if(wizStep===5) loadSettings();
 }
-function wizNav(d){
+async function wizNav(d){
   if(wizStep===5 && d>0) return;
+  if(d<0 && wizStep===4 && edgePhase>0){
+    await wizEdgeBack();
+    return;
+  }
   wizStep=Math.max(0,Math.min(5,wizStep+d));
   showWiz();
 }
@@ -797,37 +804,52 @@ function updateEdgePrompt(){
   const which=(edgePhase%2===0)?'first':'last';
   edgePrompt.innerHTML='Light the <b>'+which+'</b> non-skipped LED of '+sideLabels[side]+'.';
   edgeStatus.textContent='Measuring '+sideLabels[side]+' · '+which+' · phase '+(edgePhase+1)+'/8';
+  if(typeof edgePrev!=='undefined' && edgePrev) edgePrev.disabled=edgePhase<=0;
+  if(typeof wizBack!=='undefined' && wizBack) wizBack.textContent=(wizStep===4 && edgePhase>0)?'Previous point':'Back';
 }
 async function wizEdgeLight(){
   try{
     const i=firstActiveAtOrAfter(Number(edgeIdx.value)||0);
     edgeIdx.value=i;
     const key=sideKeys[currentEdgeSide()];
-    if(edgePhase%2===0) edgeRanges[key]=[i,i];
-    else edgeRanges[key][1]=i;
+    if(!edgeRanges[key]) edgeRanges[key]=[i,i];
     if(edgePhase%2===0){
+      edgeRanges[key][0]=i;
       await runCalMode('index',{index:i});
     } else {
+      edgeRanges[key][1]=i;
       await runCalMode('edge_range',{range_start:edgeRanges[key][0], range_end:edgeRanges[key][1]});
     }
+  }catch(e){ alert(e.message); }
+}
+async function wizEdgeBack(){
+  if(edgePhase<=0) return;
+  try{
+    edgePhase--;
+    if(edgeConfirmed[edgePhase]!=null) edgeIdx.value=edgeConfirmed[edgePhase];
+    updateEdgePrompt();
+    await wizEdgeLight();
   }catch(e){ alert(e.message); }
 }
 async function wizEdgeConfirm(){
   try{
     const wasEnd=edgePhase%2===1;
     await wizEdgeLight();
-    const endIdx=Number(edgeIdx.value)||0;
+    const confirmed=Number(edgeIdx.value)||0;
+    edgeConfirmed[edgePhase]=confirmed;
     edgePhase++;
     if(edgePhase>=8){
       await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({edge_ranges:edgeRanges})});
       await loadSettings();
       edgePhase=0;
+      edgeConfirmed=[];
       wizStep=5; showWiz();
       alert('Edges saved — see HyperHDR summary');
       return;
     }
-    if(wasEnd) edgeIdx.value=nextActiveIndex(endIdx);
+    if(wasEnd) edgeIdx.value=nextActiveIndex(confirmed);
+    else if(edgeConfirmed[edgePhase]!=null) edgeIdx.value=edgeConfirmed[edgePhase];
     updateEdgePrompt();
   }catch(e){ alert(e.message); }
 }
