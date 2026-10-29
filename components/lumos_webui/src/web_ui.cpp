@@ -202,6 +202,7 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <button type="button" onclick="wizCopyHh()">Copy summary</button>
   <button class="secondary" type="button" onclick="runCalMode('sides')">Re-test side colors</button>
   <button class="secondary" type="button" onclick="runCalMode('map')">Show active/ignored map</button>
+  <p class="hint" id="wizDoneNote">Done leaves calibration and turns the previous lighting plugin back on. The counts above are already saved.</p>
 </div>
 <div class="grid2">
   <button class="secondary" type="button" id="wizBack" onclick="wizNav(-1)" style="margin-top:.75rem">Back</button>
@@ -264,6 +265,7 @@ let calPickOn=false;
 let wizStep=0;
 let edgePhase=0; // pairs of first/last along wire_side_order
 let edgeConfirmed=[]; // wire index confirmed at each phase this session
+let calReturnPlugin=''; // plugin active before calibration took the strip
 let edgeRanges={top:[0,0],right:[0,0],bottom:[0,0],left:[0,0]};
 let edgeRangesSet=false;
 const sideKeys=['top','right','bottom','left'];
@@ -394,6 +396,7 @@ function setPairCard(el,d,peer){
   el.innerHTML='<div class="dot"></div><div><h3>'+title+'</h3><p>'+detail+'</p></div>';
 }
 function renderStatus(s){
+  if(s.active_plugin && s.active_plugin!=='calibration') calReturnPlugin=s.active_plugin;
   const view=Object.assign({},s); delete view.type;
   setPairCard(document.getElementById('pairCard'), s.doorbell||{}, (s.doorbell&&s.doorbell.paired_tx_mac)||'');
   status.textContent=JSON.stringify(view,null,2);
@@ -740,13 +743,51 @@ function showWiz(){
   wizStepLabel.textContent='Step '+(wizStep+1)+' / 6 — '+wizLabels[wizStep];
   wizBack.disabled=wizStep===0;
   wizBack.textContent=(wizStep===4 && edgePhase>0)?'Previous point':'Back';
+  wizNext.disabled=false;
   wizNext.textContent=wizStep===5?'Done':'Next';
+  if(wizDoneNote) wizDoneNote.textContent=wizStep===5
+    ? 'Done leaves calibration and turns the previous lighting plugin back on. The counts above are already saved.'
+    : '';
   if(wizStep===3){ calPick.checked=true; toggleCalPick(); }
   if(wizStep===4) updateEdgePrompt();
   if(wizStep===5) loadSettings();
 }
+let wizFinishing=false;
+async function wizFinish(){
+  if(wizFinishing || wizStep!==5) return;
+  wizFinishing=true;
+  wizNext.disabled=true;
+  try{
+    const s=await j('/api/v1/settings');
+    geometryValid=!!s.geometry_valid;
+    if(s.hyperhdr) updateHhCard(s.hyperhdr, s.geometry_valid);
+    let id=calReturnPlugin;
+    if(!id || id==='calibration'){
+      id=(s.last_used_plugin && s.last_used_plugin!=='calibration') ? s.last_used_plugin : 'hyperhdr';
+    }
+    await j('/api/v1/plugin/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    plugin.value=id;
+    pluginDirty=false;
+    try{ await refresh(); }catch{}
+    if(wizStep!==5) return;
+    const plug=pluginsCache.find(p=>p.id===id);
+    const label=(plug&&plug.name)?plug.name:id;
+    let msg='Calibration saved. Lighting is back on '+label+'.';
+    if(!s.geometry_valid) msg+=' Geometry is not valid — use Back and check the edges.';
+    if(wizDoneNote) wizDoneNote.textContent=msg;
+    alert(msg);
+  }catch(e){
+    if(wizStep===5) wizNext.disabled=false;
+    alert(e.message);
+  }finally{
+    wizFinishing=false;
+  }
+}
 async function wizNav(d){
-  if(wizStep===5 && d>0) return;
+  if(wizStep===5 && d>0){
+    await wizFinish();
+    return;
+  }
   if(d<0 && wizStep===4 && edgePhase>0){
     await wizEdgeBack();
     return;
