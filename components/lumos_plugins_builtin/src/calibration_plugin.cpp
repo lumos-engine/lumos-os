@@ -91,20 +91,29 @@ public:
         }
 
         if (mode_ == "edge_range") {
-            // Inclusive wire range; endpoints marked distinctly. Outside stays black
-            // (fb.fill above). Ignore-mask is off so skips can be measured if needed.
-            const LedIndex a = std::min(range_start_, range_end_);
-            const LedIndex b = std::max(range_start_, range_end_);
-            if (a < fb.size()) {
-                const LedIndex last = std::min(b, static_cast<LedIndex>(fb.size() - 1));
-                for (LedIndex i = a; i <= last; ++i) {
+            // Inclusive walk, +1 modulo length. end < start wraps through LED 0.
+            // Skipped indices stay dark and belong to no edge.
+            const LedIndex n = fb.size();
+            if (n == 0 || range_start_ >= n || range_end_ >= n) {
+                return;
+            }
+            const auto skipped = [&](LedIndex i) {
+                return physical_led_skipped(i, n, d.edge_ignore, d.ignored_leds);
+            };
+            LedIndex i = range_start_;
+            for (LedIndex step = 0; step < n; ++step) {
+                if (!skipped(i)) {
                     fb[i] = Rgb{40, 180, 255};
                 }
+                if (i == range_end_) {
+                    break;
+                }
+                i = static_cast<LedIndex>((static_cast<unsigned>(i) + 1u) % n);
             }
-            if (range_start_ < fb.size()) {
+            if (!skipped(range_start_)) {
                 fb[range_start_] = Rgb{255, 255, 255};
             }
-            if (range_end_ < fb.size() && range_end_ != range_start_) {
+            if (range_end_ != range_start_ && !skipped(range_end_)) {
                 fb[range_end_] = Rgb{255, 80, 80};
             }
             return;

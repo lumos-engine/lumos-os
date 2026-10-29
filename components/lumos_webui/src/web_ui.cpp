@@ -186,12 +186,13 @@ pre{white-space:pre-wrap;background:#0f141b;padding:.75rem;border-radius:8px;fon
   <p class="hint" id="calStatus">Ignored: 0</p>
 </div>
 <div id="wiz4" style="display:none">
-  <p class="hint" id="edgePrompt">Light the <b>start</b> of TOP (first LED on that TV edge).</p>
+  <p class="hint" id="edgePrompt">Light the <b>first</b> non-skipped LED of this edge.</p>
   <label>Wire index</label><input id="edgeIdx" type="number" min="0" max="2000" value="0"/>
   <div class="grid2">
     <button type="button" onclick="wizEdgeLight()">Light this index</button>
     <button type="button" onclick="wizEdgeConfirm()" style="margin-top:.75rem">Confirm</button>
   </div>
+  <p class="hint">Each LED belongs to one edge. A lower last index wraps through 0 (110 then 9). Skipped LEDs stay off. The next edge starts at the next LED that is not skipped.</p>
   <p class="hint" id="edgeStatus">—</p>
 </div>
 <div id="wiz5" style="display:none">
@@ -260,8 +261,11 @@ let ignoredSet=new Set();
 let ledPositions=[]; // {i,x,y} physical wire index
 let calPickOn=false;
 let wizStep=0;
-let edgePhase=0; // 0 start top, 1 end top, ... 7 end left
+let edgePhase=0; // pairs of first/last along wire_side_order
 let edgeRanges={top:[0,0],right:[0,0],bottom:[0,0],left:[0,0]};
+let edgeRangesSet=false;
+const sideKeys=['top','right','bottom','left'];
+const sideLabels=['TOP','RIGHT','BOTTOM','LEFT'];
 const wizLabels=['Orientation','Find total LEDs','Skip front / end','Middle disables','Measure edges','HyperHDR summary'];
 async function j(url,opts){const r=await fetch(url,opts); if(!r.ok) throw new Error(await r.text()); return r.json()}
 function toggleStatic(){document.getElementById('staticFields').classList.toggle('show', useStatic.checked);}
@@ -284,8 +288,71 @@ function wireSideOrder(start, dir){
   for(let i=0;i<4;i++) out.push((first+step*i+4)%4);
   return out;
 }
+function stripLength(){ return Number(ledCount.value)||Number(prefixN.value)||0; }
+function isSkippedIndex(i, n){
+  n=n||stripLength();
+  if(n<=0 || i<0 || i>=n) return true;
+  const skip0=Math.min(Number(skipStart.value)||0, n);
+  const skip1=Math.min(Number(skipEnd.value)||0, n-skip0);
+  if(i<skip0) return true;
+  if(skip1>0 && i>=n-skip1) return true;
+  return ignoredSet.has(i);
+}
+function nextActiveIndex(after){
+  const n=stripLength();
+  if(n<=0) return 0;
+  let i=(Number(after)+1)%n;
+  for(let s=0;s<n;s++){
+    if(!isSkippedIndex(i, n)) return i;
+    i=(i+1)%n;
+  }
+  return Number(after)||0;
+}
+function firstActiveAtOrAfter(i){
+  const n=stripLength();
+  if(n<=0) return 0;
+  i=((Number(i)%n)+n)%n;
+  for(let s=0;s<n;s++){
+    if(!isSkippedIndex(i, n)) return i;
+    i=(i+1)%n;
+  }
+  return 0;
+}
+function walkEdge(n, start, end){
+  const out=[];
+  if(!n || start<0 || end<0 || start>=n || end>=n) return out;
+  let i=start;
+  for(let s=0;s<n;s++){
+    if(!isSkippedIndex(i, n)) out.push(i);
+    if(i===end) break;
+    i=(i+1)%n;
+  }
+  return out;
+}
+function currentEdgeSide(){
+  const order=wireSideOrder(Number(periStart.value)||0, Number(periDir.value)||0);
+  return order[Math.floor(edgePhase/2)]|0;
+}
 // Build logical→physical when API map missing (skips + ignores + orientation + layout).
 function buildActiveToPhysicalLocal(physCount){
+  if(edgeRangesSet && physCount){
+    const rev=(Number(periDir.value)||0)===1;
+    const walked={};
+    for(const k of sideKeys){
+      const r=edgeRanges[k]||[0,0];
+      walked[k]=walkEdge(physCount, r[0]|0, r[1]|0);
+    }
+    const counts={top:walked.top.length,right:walked.right.length,bottom:walked.bottom.length,left:walked.left.length};
+    const active=counts.top+counts.right+counts.bottom+counts.left;
+    const base={top:0,right:counts.top,bottom:counts.top+counts.right,left:counts.top+counts.right+counts.bottom};
+    const map=new Array(active);
+    for(const k of sideKeys){
+      const leds=walked[k].slice();
+      if(rev) leds.reverse();
+      for(let i=0;i<leds.length;i++) map[base[k]+i]=leds[i];
+    }
+    return map;
+  }
   const T=layoutSides.top|0,R=layoutSides.right|0,B=layoutSides.bottom|0,L=layoutSides.left|0;
   const active=T+R+B+L;
   if(!physCount||!active) return [];
@@ -450,6 +517,13 @@ async function loadSettings(){
       skipEnd.value=s.edge_ignore.skip_end||0;
     }
     ignoredSet=new Set(Array.isArray(s.ignored_leds)?s.ignored_leds:[]);
+    edgeRangesSet=!!s.edge_ranges_set && !!s.edge_ranges;
+    if(s.edge_ranges){
+      for(const k of sideKeys){
+        const r=s.edge_ranges[k];
+        if(Array.isArray(r) && r.length>=2) edgeRanges[k]=[Number(r[0]), Number(r[1])];
+      }
+    }
     if(s.layout){
       layTop.value=s.layout.top; layRight.value=s.layout.right;
       layBottom.value=s.layout.bottom; layLeft.value=s.layout.left;
@@ -719,29 +793,30 @@ async function wizToggleMidIndex(){
   }catch(e){ alert(e.message); }
 }
 function updateEdgePrompt(){
-  const sides=['TOP','RIGHT','BOTTOM','LEFT'];
-  const side=sides[Math.floor(edgePhase/2)];
-  const which=(edgePhase%2===0)?'start':'end';
-  edgePrompt.innerHTML='Light the <b>'+which+'</b> of '+side+' (wire index).';
-  edgeStatus.textContent='Measuring '+side+' · '+(edgePhase%2===0?'start':'end')+' · phase '+(edgePhase+1)+'/8';
+  const side=currentEdgeSide();
+  const which=(edgePhase%2===0)?'first':'last';
+  edgePrompt.innerHTML='Light the <b>'+which+'</b> non-skipped LED of '+sideLabels[side]+'.';
+  edgeStatus.textContent='Measuring '+sideLabels[side]+' · '+which+' · phase '+(edgePhase+1)+'/8';
 }
 async function wizEdgeLight(){
   try{
-    const i=Number(edgeIdx.value)||0;
-    const sides=['top','right','bottom','left'];
-    const s=sides[Math.floor(edgePhase/2)];
-    if(edgePhase%2===0){ edgeRanges[s][0]=i; edgeRanges[s][1]=i; }
-    else { edgeRanges[s][1]=i; }
+    const i=firstActiveAtOrAfter(Number(edgeIdx.value)||0);
+    edgeIdx.value=i;
+    const key=sideKeys[currentEdgeSide()];
+    if(edgePhase%2===0) edgeRanges[key]=[i,i];
+    else edgeRanges[key][1]=i;
     if(edgePhase%2===0){
       await runCalMode('index',{index:i});
     } else {
-      await runCalMode('edge_range',{range_start:edgeRanges[s][0], range_end:edgeRanges[s][1], index:i});
+      await runCalMode('edge_range',{range_start:edgeRanges[key][0], range_end:edgeRanges[key][1]});
     }
   }catch(e){ alert(e.message); }
 }
 async function wizEdgeConfirm(){
   try{
+    const wasEnd=edgePhase%2===1;
     await wizEdgeLight();
+    const endIdx=Number(edgeIdx.value)||0;
     edgePhase++;
     if(edgePhase>=8){
       await j('/api/v1/settings',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -752,6 +827,7 @@ async function wizEdgeConfirm(){
       alert('Edges saved — see HyperHDR summary');
       return;
     }
+    if(wasEnd) edgeIdx.value=nextActiveIndex(endIdx);
     updateEdgePrompt();
   }catch(e){ alert(e.message); }
 }

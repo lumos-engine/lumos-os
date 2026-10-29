@@ -81,6 +81,17 @@ void DeviceSettings::normalize_ignored_leds() {
     sort_unique_indices(ignored_leds, led_count);
 }
 
+void DeviceSettings::sync_layout_from_ranges() {
+    if (!edge_ranges.set || led_count == 0) {
+        return;
+    }
+    const auto g = geometry();
+    layout.top = g.layout.top;
+    layout.right = g.layout.right;
+    layout.bottom = g.layout.bottom;
+    layout.left = g.layout.left;
+}
+
 Result<void> Preferences::init() {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -223,6 +234,21 @@ Result<void> Preferences::load() {
     }
     device_.normalize_ignored_leds();
 
+    std::uint8_t ranges_set = 0;
+    get_u8("ew_set", ranges_set);
+    device_.edge_ranges.set = ranges_set != 0;
+    if (device_.edge_ranges.set) {
+        get_u16("ew_ts", device_.edge_ranges.top.start);
+        get_u16("ew_te", device_.edge_ranges.top.end);
+        get_u16("ew_rs", device_.edge_ranges.right.start);
+        get_u16("ew_re", device_.edge_ranges.right.end);
+        get_u16("ew_bs", device_.edge_ranges.bottom.start);
+        get_u16("ew_be", device_.edge_ranges.bottom.end);
+        get_u16("ew_ls", device_.edge_ranges.left.start);
+        get_u16("ew_le", device_.edge_ranges.left.end);
+        device_.sync_layout_from_ranges();
+    }
+
     nvs_close(handle);
     return load_plugin_blob();
 }
@@ -238,8 +264,12 @@ Result<void> Preferences::save() {
         return Result<void>::fail(ErrorCode::IoError, "nvs_open failed");
     }
 
-    device_.normalize_layout();
     device_.normalize_ignored_leds();
+    if (device_.edge_ranges.set) {
+        device_.sync_layout_from_ranges();
+    } else {
+        device_.normalize_layout();
+    }
     nvs_set_u16(handle, "led_count", device_.led_count);
     nvs_set_i32(handle, "gpio", device_.gpio);
     nvs_set_u8(handle, "chipset", static_cast<std::uint8_t>(device_.chipset));
@@ -276,6 +306,15 @@ Result<void> Preferences::save() {
     nvs_set_u16(handle, "e_cbr", device_.edge_ignore.corner_br);
     nvs_set_u16(handle, "e_cbl", device_.edge_ignore.corner_bl);
     nvs_set_u16(handle, "e_ctl", device_.edge_ignore.corner_tl);
+    nvs_set_u8(handle, "ew_set", device_.edge_ranges.set ? 1 : 0);
+    nvs_set_u16(handle, "ew_ts", device_.edge_ranges.top.start);
+    nvs_set_u16(handle, "ew_te", device_.edge_ranges.top.end);
+    nvs_set_u16(handle, "ew_rs", device_.edge_ranges.right.start);
+    nvs_set_u16(handle, "ew_re", device_.edge_ranges.right.end);
+    nvs_set_u16(handle, "ew_bs", device_.edge_ranges.bottom.start);
+    nvs_set_u16(handle, "ew_be", device_.edge_ranges.bottom.end);
+    nvs_set_u16(handle, "ew_ls", device_.edge_ranges.left.start);
+    nvs_set_u16(handle, "ew_le", device_.edge_ranges.left.end);
     nvs_set_u8(handle, "db_en", device_.doorbell.enabled ? 1 : 0);
     nvs_set_i32(handle, "db_pin", device_.doorbell.relay_pin);
     nvs_set_u8(handle, "db_ah", device_.doorbell.active_high ? 1 : 0);

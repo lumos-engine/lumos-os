@@ -5,6 +5,7 @@
 #include "lumos/core/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -29,6 +30,50 @@ struct HyperHdrSummary {
     std::uint16_t left{0};
 };
 
+// Inclusive wire indices for one TV edge. end < start means the walk wraps through 0.
+struct EdgeWireSpan {
+    LedIndex start{0};
+    LedIndex end{0};
+};
+
+// When set, these ranges replace the corner-aligned span. Missing (set == false) keeps
+// the previous mapper so devices calibrated before wrapped edges do not move.
+struct EdgeWireRanges {
+    bool set{false};
+    EdgeWireSpan top{};
+    EdgeWireSpan right{};
+    EdgeWireSpan bottom{};
+    EdgeWireSpan left{};
+
+    EdgeWireSpan span(TvSide side) const {
+        switch (side) {
+        case TvSide::Top:
+            return top;
+        case TvSide::Right:
+            return right;
+        case TvSide::Bottom:
+            return bottom;
+        case TvSide::Left:
+            return left;
+        }
+        return {};
+    }
+
+    EdgeWireSpan& span_mut(TvSide side) {
+        switch (side) {
+        case TvSide::Top:
+            return top;
+        case TvSide::Right:
+            return right;
+        case TvSide::Bottom:
+            return bottom;
+        case TvSide::Left:
+            return left;
+        }
+        return top;
+    }
+};
+
 struct LedGeometry {
     LedIndex physical{0};
     LedLayoutCounts layout{};
@@ -36,6 +81,8 @@ struct LedGeometry {
     std::vector<std::uint16_t> ignored_physical{}; // middle disables (wire indices)
     PerimeterStart start{PerimeterStart::TopLeft};
     PerimeterDirection direction{PerimeterDirection::Clockwise};
+    EdgeWireRanges wire_ranges{};
+    bool wire_overlap{false};
 
     // active (logical CW-from-TL) → physical wire index
     std::vector<std::uint16_t> active_to_physical;
@@ -82,12 +129,120 @@ inline LedIndex edge_active_count(LedIndex start, LedIndex end_inclusive,
     return span > ign ? static_cast<LedIndex>(span - ign) : 0;
 }
 
+// skip_start, skip_end, and middle ignores are not on any edge.
+inline bool physical_led_skipped(LedIndex index, LedIndex physical, const EdgeIgnoreParams& edge,
+                                 const std::vector<std::uint16_t>& ignored) {
+    if (physical == 0 || index >= physical) {
+        return true;
+    }
+    const LedIndex skip0 = std::min(edge.skip_start, physical);
+    const LedIndex skip1 =
+        skip0 < physical ? std::min(edge.skip_end, static_cast<LedIndex>(physical - skip0)) : 0;
+    if (index < skip0) {
+        return true;
+    }
+    if (skip1 > 0 && index >= static_cast<LedIndex>(physical - skip1)) {
+        return true;
+    }
+    return std::find(ignored.begin(), ignored.end(), index) != ignored.end();
+}
+
+// Next index after `after`, modulo physical, that is not skipped. `after` itself is not returned.
+inline LedIndex next_unskipped_wire(LedIndex after, LedIndex physical, const EdgeIgnoreParams& edge,
+                                    const std::vector<std::uint16_t>& ignored) {
+    if (physical == 0) {
+        return 0;
+    }
+    LedIndex i = static_cast<LedIndex>((static_cast<unsigned>(after) + 1u) % physical);
+    for (LedIndex n = 0; n < physical; ++n) {
+        if (!physical_led_skipped(i, physical, edge, ignored)) {
+            return i;
+        }
+        i = static_cast<LedIndex>((static_cast<unsigned>(i) + 1u) % physical);
+    }
+    return after;
+}
+
+// Inclusive start→end, always stepping +1 modulo physical. Skipped indices are omitted.
+inline std::vector<std::uint16_t> walk_edge_wires(LedIndex physical, LedIndex start, LedIndex end,
+                                                  const EdgeIgnoreParams& edge,
+                                                  const std::vector<std::uint16_t>& ignored) {
+    std::vector<std::uint16_t> out;
+    if (physical == 0 || start >= physical || end >= physical) {
+        return out;
+    }
+    LedIndex i = start;
+    for (LedIndex n = 0; n < physical; ++n) {
+        if (!physical_led_skipped(i, physical, edge, ignored)) {
+            out.push_back(i);
+        }
+        if (i == end) {
+            break;
+        }
+        i = static_cast<LedIndex>((static_cast<unsigned>(i) + 1u) % physical);
+    }
+    return out;
+}
+
+inline void map_wrapped_edges(LedGeometry& g) {
+    const LedIndex physical = g.physical;
+    g.active_to_physical.clear();
+    g.wire_overlap = false;
+    std::vector<std::uint8_t> seen(physical, 0);
+    std::array<std::vector<std::uint16_t>, 4> walked{};
+    const std::array<TvSide, 4> sides{TvSide::Top, TvSide::Right, TvSide::Bottom, TvSide::Left};
+    for (int s = 0; s < 4; ++s) {
+        const auto span = g.wire_ranges.span(sides[static_cast<std::size_t>(s)]);
+        const auto leds =
+            walk_edge_wires(physical, span.start, span.end, g.edge, g.ignored_physical);
+        for (std::uint16_t w : leds) {
+            if (w >= physical) {
+                continue;
+            }
+            if (seen[w] != 0) {
+                g.wire_overlap = true;
+                continue;
+            }
+            seen[w] = 1;
+            walked[static_cast<std::size_t>(s)].push_back(w);
+        }
+    }
+    g.layout.top = static_cast<std::uint16_t>(walked[0].size());
+    g.layout.right = static_cast<std::uint16_t>(walked[1].size());
+    g.layout.bottom = static_cast<std::uint16_t>(walked[2].size());
+    g.layout.left = static_cast<std::uint16_t>(walked[3].size());
+    const LedIndex active = g.layout.total();
+    g.active_to_physical.assign(active, 0);
+    const LedIndex bases[4] = {
+        0,
+        g.layout.top,
+        static_cast<LedIndex>(g.layout.top + g.layout.right),
+        static_cast<LedIndex>(g.layout.top + g.layout.right + g.layout.bottom),
+    };
+    for (int s = 0; s < 4; ++s) {
+        auto leds = walked[static_cast<std::size_t>(s)];
+        if (side_reversed_on_wire(sides[static_cast<std::size_t>(s)], g.direction)) {
+            std::reverse(leds.begin(), leds.end());
+        }
+        for (std::size_t i = 0; i < leds.size(); ++i) {
+            const LedIndex logical = static_cast<LedIndex>(bases[s] + static_cast<LedIndex>(i));
+            const auto wire = leds[i];
+            if (logical < g.active_to_physical.size()) {
+                g.active_to_physical[logical] = wire;
+                g.physical_to_active[wire] = logical;
+            }
+        }
+    }
+}
+
 // Rebuild maps. Layout counts are ACTIVE LEDs per TV side (HyperHDR).
-// Physical wire: [skip_start][perimeter span][skip_end], with middle ignores inside the span.
+// Without wire ranges: [skip_start][perimeter span from a corner][skip_end].
+// With wire ranges: each edge is an inclusive walk that may wrap through LED 0.
 inline LedGeometry build_led_geometry(LedIndex physical, LedLayoutCounts layout,
                                       const EdgeIgnoreParams& edge,
                                       const std::vector<std::uint16_t>& ignored_physical,
-                                      PerimeterStart start, PerimeterDirection direction) {
+                                      PerimeterStart start, PerimeterDirection direction,
+                                      const EdgeWireRanges& wire_ranges = {}) {
     LedGeometry g;
     g.physical = physical;
     g.layout = layout;
@@ -95,6 +250,7 @@ inline LedGeometry build_led_geometry(LedIndex physical, LedLayoutCounts layout,
     g.ignored_physical = ignored_physical;
     g.start = start;
     g.direction = direction;
+    g.wire_ranges = wire_ranges;
     sort_unique_indices(g.ignored_physical, physical);
 
     g.physical_ignore_mask.assign((physical + 7) / 8, 0);
@@ -121,6 +277,17 @@ inline LedGeometry build_led_geometry(LedIndex physical, LedLayoutCounts layout,
             g.physical_ignore_mask[i / 8] =
                 static_cast<std::uint8_t>(g.physical_ignore_mask[i / 8] | (1u << (i % 8)));
         }
+    }
+
+    if (g.wire_ranges.set) {
+        map_wrapped_edges(g);
+        for (LedIndex w = 0; w < physical; ++w) {
+            if (g.physical_to_active[w] == 0xFFFF) {
+                g.physical_ignore_mask[w / 8] =
+                    static_cast<std::uint8_t>(g.physical_ignore_mask[w / 8] | (1u << (w % 8)));
+            }
+        }
+        return g;
     }
 
     // Span between skips, excluding ignored — ordered in wire travel direction.
@@ -172,6 +339,29 @@ inline LedGeometry build_led_geometry(LedIndex physical, LedLayoutCounts layout,
 inline bool geometry_counts_valid(const LedGeometry& g) {
     if (g.physical == 0) {
         return false;
+    }
+    if (g.wire_ranges.set) {
+        if (g.wire_overlap || g.active_to_physical.size() != g.active_count()) {
+            return false;
+        }
+        LedIndex expect = 0;
+        for (LedIndex i = 0; i < g.physical; ++i) {
+            if (!physical_led_skipped(i, g.physical, g.edge, g.ignored_physical)) {
+                ++expect;
+            }
+        }
+        if (expect != g.active_count()) {
+            return false;
+        }
+        std::vector<std::uint8_t> seen(g.physical, 0);
+        for (std::uint16_t w : g.active_to_physical) {
+            if (w >= g.physical || seen[w] != 0 ||
+                physical_led_skipped(w, g.physical, g.edge, g.ignored_physical)) {
+                return false;
+            }
+            seen[w] = 1;
+        }
+        return true;
     }
     LedIndex ignored_middle = 0;
     const LedIndex skip0 = std::min(g.edge.skip_start, g.physical);

@@ -450,6 +450,19 @@ cJSON* device_settings_to_json(const DeviceSettings& d, bool include_secrets) {
     cJSON_AddNumberToObject(layout, "left", d.layout.left);
     cJSON_AddNumberToObject(root, "perimeter_start", static_cast<int>(d.perimeter_start));
     cJSON_AddNumberToObject(root, "perimeter_direction", static_cast<int>(d.perimeter_direction));
+    cJSON_AddBoolToObject(root, "edge_ranges_set", d.edge_ranges.set);
+    if (d.edge_ranges.set) {
+        cJSON* ranges = cJSON_AddObjectToObject(root, "edge_ranges");
+        const auto add_span = [&](const char* key, EdgeWireSpan span) {
+            cJSON* arr = cJSON_AddArrayToObject(ranges, key);
+            cJSON_AddItemToArray(arr, cJSON_CreateNumber(span.start));
+            cJSON_AddItemToArray(arr, cJSON_CreateNumber(span.end));
+        };
+        add_span("top", d.edge_ranges.top);
+        add_span("right", d.edge_ranges.right);
+        add_span("bottom", d.edge_ranges.bottom);
+        add_span("left", d.edge_ranges.left);
+    }
     cJSON* edge = cJSON_AddObjectToObject(root, "edge_ignore");
     cJSON_AddNumberToObject(edge, "skip_start", d.edge_ignore.skip_start);
     cJSON_AddNumberToObject(edge, "skip_end", d.edge_ignore.skip_end);
@@ -658,55 +671,36 @@ void apply_device_settings(Preferences& preferences, Renderer& renderer, cJSON* 
         }
     }
 
-    // Wizard: set each edge from inclusive physical wire [start,end].
-    // { "edge_ranges": { "top":[a,b], "right":[c,d], ... } }
-    // Measured ranges are authoritative active LEDs: count = end-start+1, and any
-    // middle-ignores inside a confirmed edge are cleared (identify can light ignored
-    // LEDs, which previously produced "count shrunk + sides missing endpoints").
+    // Wizard: inclusive physical wire [start, end] per edge, order preserved.
+    // end < start wraps through LED 0. Counts are the non-skipped LEDs on each walk.
+    // { "edge_ranges": { "top":[a,b], "right":[c,d], "bottom":[e,f], "left":[g,h] } }
     if (const cJSON* ranges = cJSON_GetObjectItem(json, "edge_ranges"); cJSON_IsObject(ranges)) {
         const char* keys[4] = {"top", "right", "bottom", "left"};
-        std::uint16_t* sides[4] = {&d.layout.top, &d.layout.right, &d.layout.bottom, &d.layout.left};
-        std::array<std::pair<LedIndex, LedIndex>, 4> measured{};
-        int measured_n = 0;
-        for (int i = 0; i < 4; ++i) {
+        const TvSide sides[4] = {TvSide::Top, TvSide::Right, TvSide::Bottom, TvSide::Left};
+        EdgeWireRanges parsed;
+        bool ok = d.led_count > 0;
+        for (int i = 0; i < 4 && ok; ++i) {
             const cJSON* arr = cJSON_GetObjectItem(ranges, keys[i]);
             if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) < 2) {
-                continue;
+                ok = false;
+                break;
             }
             const cJSON* a = cJSON_GetArrayItem(arr, 0);
             const cJSON* b = cJSON_GetArrayItem(arr, 1);
-            if (!cJSON_IsNumber(a) || !cJSON_IsNumber(b)) {
-                continue;
+            if (!cJSON_IsNumber(a) || !cJSON_IsNumber(b) || a->valueint < 0 || b->valueint < 0 ||
+                a->valueint >= d.led_count || b->valueint >= d.led_count) {
+                ok = false;
+                break;
             }
-            const auto a0 = static_cast<LedIndex>(std::max(0, a->valueint));
-            const auto b0 = static_cast<LedIndex>(std::max(0, b->valueint));
-            const auto start = std::min(a0, b0);
-            const auto end = std::max(a0, b0);
-            if (end < start || end - start + 1 > 2000) {
-                continue;
-            }
-            *sides[i] = static_cast<std::uint16_t>(end - start + 1);
-            if (measured_n < 4) {
-                measured[static_cast<std::size_t>(measured_n++)] = {start, end};
-            }
+            parsed.span_mut(sides[i]) = EdgeWireSpan{
+                static_cast<LedIndex>(a->valueint),
+                static_cast<LedIndex>(b->valueint),
+            };
         }
-        if (measured_n > 0 && !d.ignored_leds.empty()) {
-            std::vector<std::uint16_t> kept;
-            kept.reserve(d.ignored_leds.size());
-            for (std::uint16_t idx : d.ignored_leds) {
-                bool in_edge = false;
-                for (int i = 0; i < measured_n; ++i) {
-                    if (idx >= measured[static_cast<std::size_t>(i)].first &&
-                        idx <= measured[static_cast<std::size_t>(i)].second) {
-                        in_edge = true;
-                        break;
-                    }
-                }
-                if (!in_edge) {
-                    kept.push_back(idx);
-                }
-            }
-            d.ignored_leds = std::move(kept);
+        if (ok) {
+            parsed.set = true;
+            d.edge_ranges = parsed;
+            d.sync_layout_from_ranges();
         }
     }
 

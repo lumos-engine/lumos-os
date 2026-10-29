@@ -56,6 +56,8 @@ struct DeviceSettings {
     // Physical wire indices that stay off (middle disables). Ends use edge_ignore skips.
     std::vector<std::uint16_t> ignored_leds{};
     EdgeIgnoreParams edge_ignore{};
+    // Inclusive per-edge wire ranges. set == false keeps the corner-start map.
+    EdgeWireRanges edge_ranges{};
     StartupPluginMode startup_plugin{StartupPluginMode::HyperHdr};
     FallbackPluginMode fallback_plugin{FallbackPluginMode::Bias};
     Milliseconds hyperhdr_timeout_ms{kDefaultHyperHdrTimeoutMs};
@@ -80,12 +82,14 @@ struct DeviceSettings {
     LedGeometry geometry() const {
         return build_led_geometry(
             led_count, LedLayoutCounts{layout.top, layout.right, layout.bottom, layout.left},
-            edge_ignore, ignored_leds, perimeter_start, perimeter_direction);
+            edge_ignore, ignored_leds, perimeter_start, perimeter_direction, edge_ranges);
     }
 
     // If layout is empty/invalid, seed a 16:9-ish active layout that fits under physical.
     void normalize_layout();
     void normalize_ignored_leds();
+    // When edge ranges are saved, side counts are the non-skipped LEDs on each walk.
+    void sync_layout_from_ranges();
 };
 
 class Preferences {
